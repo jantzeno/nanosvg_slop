@@ -2311,8 +2311,9 @@ static void nsvg__pathArcTo(NSVGparser* p, float* cpx, float* cpy, float* args, 
 	else if (fs == 1 && da < 0)
 		da += 2 * NSVG_PI;
 
-	// Invalid intermediate geometry must not reach the subdivision cast.
-	if (!isfinite(da) || !isfinite(a1) || !isfinite(cx) || !isfinite(cy)) {
+	// Invalid geometry cannot reach the subdivision cast. Tiny swept angles
+	// lose precision in (1-cos(hda))/sin(hda); approximate them with a line.
+	if (!isfinite(da) || !isfinite(a1) || !isfinite(cx) || !isfinite(cy) || fabsf(da) < 2e-3f) {
 		nsvg__lineTo(p, x2, y2);
 		*cpx = x2;
 		*cpy = y2;
@@ -2328,12 +2329,7 @@ static void nsvg__pathArcTo(NSVGparser* p, float* cpx, float* cpy, float* args, 
 	// The loop assumes an iteration per end point (including start and end), this +1.
 	ndivs = (int)(fabsf(da) / (NSVG_PI*0.5f) + 1.0f);
 	hda = (da / (float)ndivs) / 2.0f;
-	// Fix for ticket #179: division by 0: avoid cotangens around 0 (infinite)
-	if ((hda < 1e-3f) && (hda > -1e-3f))
-		hda *= 0.5f;
-	else
-		hda = (1.0f - cosf(hda)) / sinf(hda);
-	kappa = fabsf(4.0f / 3.0f * hda);
+	kappa = fabsf(4.0f / 3.0f * (1.0f - cosf(hda)) / sinf(hda));
 	if (da < 0.0f)
 		kappa = -kappa;
 
@@ -2343,6 +2339,9 @@ static void nsvg__pathArcTo(NSVGparser* p, float* cpx, float* cpy, float* args, 
 		dy = sinf(a);
 		nsvg__xformPoint(&x, &y, dx*rx, dy*ry, t); // position
 		nsvg__xformVec(&tanx, &tany, -dy*rx * kappa, dx*ry * kappa, t); // tangent
+		// Keep exact endpoints when reconstructing them loses precision.
+		if (i == 0) { x = x1; y = y1; }
+		if (i == ndivs) { x = x2; y = y2; }
 		if (i > 0)
 			nsvg__cubicBezTo(p, px+ptanx,py+ptany, x-tanx, y-tany, x, y);
 		px = x;

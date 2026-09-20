@@ -247,6 +247,37 @@ static void test_transforms(void)
 	}
 }
 
+static void test_arcs(void)
+{
+	const float radii[] = {195631, 1000, 1000, 10};
+	const float ends[][2] = {{39.013f, 7.101f}, {1.8f, 60}, {2.2f, 60}, {10, 70}};
+	size_t i;
+	int sweep;
+	for (sweep = 0; sweep < 2; sweep++) {
+		for (i = 0; i < sizeof(radii)/sizeof(radii[0]); i++) {
+			NSVGparser* p = nsvg__createParser();
+			float x = 0, y = 60;
+			float args[7] = {radii[i], radii[i], 0, 0, (float)sweep, ends[i][0], ends[i][1] - y};
+			int j;
+			assert(p != NULL);
+			nsvg__moveTo(p, x, y);
+			nsvg__pathArcTo(p, &x, &y, args, 1);
+			assert(fabsf(p->pts[p->npts*2-2] - ends[i][0]) < 1e-3f);
+			assert(fabsf(p->pts[p->npts*2-1] - ends[i][1]) < 1e-3f);
+			for (j = 0; j < p->npts*2; j++) assert(isfinite(p->pts[j]));
+			if (i < 2) assert(p->npts == 4);
+			if (i == 1) assert(p->pts[3] == 60 && p->pts[5] == 60);
+			if (i >= 2) assert(p->pts[3] != 60 || p->pts[5] != 60);
+			args[0] = 3;
+			args[1] = 4;
+			nsvg__pathLineTo(p, &x, &y, args, 1);
+			assert(fabsf(p->pts[p->npts*2-2] - (ends[i][0]+3)) < 1e-5f);
+			assert(fabsf(p->pts[p->npts*2-1] - (ends[i][1]+4)) < 1e-5f);
+			nsvg__deleteParser(p);
+		}
+	}
+}
+
 int main(void)
 {
 	test_css_recursion();
@@ -255,6 +286,7 @@ int main(void)
 	test_numeric();
 	test_inverse();
 	test_transforms();
+	test_arcs();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
