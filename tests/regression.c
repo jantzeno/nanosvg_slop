@@ -278,6 +278,54 @@ static void test_arcs(void)
 	}
 }
 
+static void test_gradients(void)
+{
+	int radial, transformed, userSpace, variant, j;
+	for (radial = 0; radial < 2; radial++) {
+		for (transformed = 0; transformed < 2; transformed++) {
+			for (userSpace = 0; userSpace < 2; userSpace++) {
+				NSVGimage* images[2];
+				for (variant = 0; variant < 2; variant++) {
+					char svg[1024];
+					const char* coords;
+					const char* tag = radial ? "radialGradient" : "linearGradient";
+					if (radial)
+						coords = !variant ? "cx='.5' cy='.5' r='.5' fx='.25' fy='.75'" :
+							(userSpace ? "cx='.5px' cy='.5px' r='.5px' fx='.25px' fy='.75px'" : "cx='50%' cy='50%' r='50%' fx='25%' fy='75%'");
+					else
+						coords = !variant ? "x1='0' y1='0' x2='1' y2='0'" :
+							(userSpace ? "x1='0px' y1='0px' x2='1px' y2='0px'" : "x1='0%' y1='0%' x2='100%' y2='0%'");
+					snprintf(svg, sizeof(svg), "<svg width='256' height='256'><defs><%s id='g' gradientUnits='%s' %s><stop stop-color='red'/><stop offset='1' stop-color='blue'/></%s></defs><rect x='10' y='20' width='80' height='40' transform='%s' fill='url(#g)' stroke='url(#g)'/></svg>", tag, userSpace ? "userSpaceOnUse" : "objectBoundingBox", coords, tag, transformed ? "translate(3 4) scale(2 3)" : "");
+					images[variant] = parse(svg);
+					assert(images[variant]->shapes != NULL);
+				}
+				for (variant = 0; variant < 2; variant++) {
+					NSVGshape* a = images[0]->shapes;
+					NSVGshape* b = images[1]->shapes;
+					NSVGpaint* pa = variant ? &a->stroke : &a->fill;
+					NSVGpaint* pb = variant ? &b->stroke : &b->fill;
+					float sx = transformed ? 2.0f : 1.0f;
+					assert(pa->type == (radial ? NSVG_PAINT_RADIAL_GRADIENT : NSVG_PAINT_LINEAR_GRADIENT));
+					assert(pb->type == pa->type);
+					for (j = 0; j < 6; j++) assert(fabsf(pa->gradient->xform[j] - pb->gradient->xform[j]) < 1e-6f);
+					if (radial) {
+						float radius = userSpace ? .5f : sqrtf((80*80+40*40)/2.0f)*.5f;
+						assert(fabsf(pa->gradient->xform[0] - 1/(radius*sx)) < 1e-6f);
+						assert(pa->gradient->fx == pb->gradient->fx && pa->gradient->fy == pb->gradient->fy);
+					} else {
+						float width = (userSpace ? 1.0f : 80.0f)*sx;
+						float origin = (userSpace ? 0.0f : 10.0f)*sx + (transformed ? 3.0f : 0.0f);
+						assert(fabsf(pa->gradient->xform[1] - 1/width) < 1e-6f);
+						assert(fabsf(pa->gradient->xform[5] + origin/width) < 1e-6f);
+					}
+				}
+				nsvgDelete(images[0]);
+				nsvgDelete(images[1]);
+			}
+		}
+	}
+}
+
 int main(void)
 {
 	test_css_recursion();
@@ -287,6 +335,7 @@ int main(void)
 	test_inverse();
 	test_transforms();
 	test_arcs();
+	test_gradients();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
