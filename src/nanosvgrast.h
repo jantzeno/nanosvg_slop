@@ -744,6 +744,9 @@ static void nsvg__flattenShapeStroke(NSVGrasterizer* r, NSVGshape* shape, float 
 	int lineJoin = shape->strokeLineJoin;
 	int lineCap = shape->strokeLineCap;
 	float lineWidth = shape->strokeWidth * scale;
+	// ponytail: limit dash work per shape; omit the remainder on exhaustion.
+	// Clip paths before dashing if larger patterns need to be rendered in full.
+	int dashBudget = 10000;
 
 	for (path = shape->paths; path != NULL; path = path->next) {
 		// Flatten path
@@ -788,14 +791,20 @@ static void nsvg__flattenShapeStroke(NSVGrasterizer* r, NSVGshape* shape, float 
 				allDashLen += shape->strokeDashArray[j];
 			if (shape->strokeDashCount & 1)
 				allDashLen *= 2.0f;
+			if (!(allDashLen > 0.0f) || !isfinite(allDashLen))
+				continue;
 			// Find location inside pattern
 			dashOffset = fmodf(shape->strokeDashOffset, allDashLen);
+			if (!isfinite(dashOffset))
+				continue;
 			if (dashOffset < 0.0f)
 				dashOffset += allDashLen;
 
 			while (dashOffset > shape->strokeDashArray[idash]) {
+				if (--dashBudget < 0) return;
 				dashOffset -= shape->strokeDashArray[idash];
 				idash = (idash + 1) % shape->strokeDashCount;
+				dashState = !dashState;
 			}
 			dashLen = (shape->strokeDashArray[idash] - dashOffset) * scale;
 
@@ -803,12 +812,15 @@ static void nsvg__flattenShapeStroke(NSVGrasterizer* r, NSVGshape* shape, float 
 				float dx = r->points2[j].x - cur.x;
 				float dy = r->points2[j].y - cur.y;
 				float dist = sqrtf(dx*dx + dy*dy);
+				if (--dashBudget < 0 || !isfinite(dist)) return;
 
 				if ((totalDist + dist) > dashLen) {
 					// Calculate intermediate point
 					float d = (dashLen - totalDist) / dist;
 					float x = cur.x + dx * d;
 					float y = cur.y + dy * d;
+					// Zero-length entries may toggle the pattern without moving.
+					if (dashLen > totalDist && x == cur.x && y == cur.y) return;
 					nsvg__addPathPoint(r, x, y, NSVG_PT_CORNER);
 
 					// Stroke

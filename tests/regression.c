@@ -68,10 +68,50 @@ static void test_css_bounds(void)
 	}
 }
 
+static void render(NSVGimage* image, unsigned char* pixels)
+{
+	NSVGrasterizer* rasterizer = nsvgCreateRasterizer();
+	assert(rasterizer != NULL);
+	nsvgRasterize(rasterizer, image, 0, 0, 1, pixels, 64, 64, 64*4);
+	nsvgDeleteRasterizer(rasterizer);
+}
+
+static void test_dashes(void)
+{
+	unsigned char pixels[64*64*4];
+	const char* patterns[] = {"4 4", "0 4 4 0", "4"};
+	int offsets[] = {0, 2, 4, -2, 10};
+	size_t i, j;
+	NSVGimage* image = parse("<svg width=\"10\" height=\"10\"><polyline points=\"0,0 99999999,0\" fill=\"none\" stroke=\"#000\" stroke-width=\"1\" stroke-dasharray=\"2 1\"/></svg>");
+	render(image, pixels);
+	assert(pixels[3] > 0);
+	nsvgDelete(image);
+	// At this origin, a positive dash length can round back to the same point.
+	image = parse("<svg width=\"64\" height=\"64\"><path d=\"M100000000 1h100000000\" fill=\"none\" stroke=\"black\" stroke-dasharray=\"1 1\"/></svg>");
+	render(image, pixels);
+	nsvgDelete(image);
+	for (i = 0; i < sizeof(patterns)/sizeof(patterns[0]); i++) {
+		for (j = 0; j < sizeof(offsets)/sizeof(offsets[0]); j++) {
+			char svg[512];
+			int x;
+			snprintf(svg, sizeof(svg), "<svg width=\"64\" height=\"64\"><path d=\"M0 4H32\" fill=\"none\" stroke=\"black\" stroke-width=\"2\" stroke-dasharray=\"%s\" stroke-dashoffset=\"%d\"/></svg>", patterns[i], offsets[j]);
+			image = parse(svg);
+			render(image, pixels);
+			for (x = 0; x < 32; x++) {
+				int phase = (x + offsets[j] + 16) % 8;
+				int on = i == 1 ? phase >= 4 : phase < 4;
+				assert(pixels[(4*64+x)*4+3] == (on ? 255 : 0));
+			}
+			nsvgDelete(image);
+		}
+	}
+}
+
 int main(void)
 {
 	test_css_recursion();
 	test_css_bounds();
+	test_dashes();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
