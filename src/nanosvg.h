@@ -1572,30 +1572,35 @@ static float nsvg__parseCoordinate(NSVGparser* p, const char* str, float orig, f
 
 static int nsvg__parseTransformArgs(const char* str, float* args, int maxNa, int* na)
 {
-	const char* end;
 	const char* ptr;
 	char it[64];
 
 	*na = 0;
 	ptr = str;
-	while (*ptr && *ptr != '(') ++ptr;
-	if (*ptr == 0)
-		return 1;
-	end = ptr;
-	while (*end && *end != ')') ++end;
-	if (*end == 0)
-		return 1;
-
-	while (ptr < end) {
+	// Skip this operation's name, without searching into the next operation.
+	while ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z')) ++ptr;
+	while (*ptr && nsvg__isspace(*ptr)) ++ptr;
+	if (*ptr != '(') goto error;
+	++ptr;
+	while (*ptr && *ptr != ')') {
 		if (*ptr == '-' || *ptr == '+' || *ptr == '.' || nsvg__isdigit(*ptr)) {
-			if (*na >= maxNa) return 0;
+			if (*na >= maxNa) goto error;
 			ptr = nsvg__parseNumber(ptr, it, 64);
-			args[(*na)++] = (float)nsvg__atof(it);
-		} else {
+			args[*na] = (float)nsvg__atof(it);
+			if (!isfinite(args[*na]) || strpbrk(it, "0123456789") == NULL) goto error;
+			++*na;
+		} else if (nsvg__isspace(*ptr) || *ptr == ',') {
 			++ptr;
+		} else {
+			goto error;
 		}
 	}
-	return (int)(end - str);
+	if (*ptr != ')') goto error;
+	return (int)(ptr - str) + 1;
+
+error:
+	*na = -1;
+	return ptr > str ? (int)(ptr - str) : 1;
 }
 
 
@@ -1615,6 +1620,7 @@ static int nsvg__parseTranslate(float* xform, const char* str)
 	float t[6];
 	int na = 0;
 	int len = nsvg__parseTransformArgs(str, args, 2, &na);
+	if (na != 1 && na != 2) return len;
 	if (na == 1) args[1] = 0.0;
 
 	nsvg__xformSetTranslation(t, args[0], args[1]);
@@ -1628,6 +1634,7 @@ static int nsvg__parseScale(float* xform, const char* str)
 	int na = 0;
 	float t[6];
 	int len = nsvg__parseTransformArgs(str, args, 2, &na);
+	if (na != 1 && na != 2) return len;
 	if (na == 1) args[1] = args[0];
 	nsvg__xformSetScale(t, args[0], args[1]);
 	memcpy(xform, t, sizeof(float)*6);
@@ -1640,6 +1647,7 @@ static int nsvg__parseSkewX(float* xform, const char* str)
 	int na = 0;
 	float t[6];
 	int len = nsvg__parseTransformArgs(str, args, 1, &na);
+	if (na != 1) return len;
 	nsvg__xformSetSkewX(t, args[0]/180.0f*NSVG_PI);
 	memcpy(xform, t, sizeof(float)*6);
 	return len;
@@ -1651,6 +1659,7 @@ static int nsvg__parseSkewY(float* xform, const char* str)
 	int na = 0;
 	float t[6];
 	int len = nsvg__parseTransformArgs(str, args, 1, &na);
+	if (na != 1) return len;
 	nsvg__xformSetSkewY(t, args[0]/180.0f*NSVG_PI);
 	memcpy(xform, t, sizeof(float)*6);
 	return len;
@@ -1663,6 +1672,7 @@ static int nsvg__parseRotate(float* xform, const char* str)
 	float m[6];
 	float t[6];
 	int len = nsvg__parseTransformArgs(str, args, 3, &na);
+	if (na != 1 && na != 3) return len;
 	if (na == 1)
 		args[1] = args[2] = 0.0f;
 	nsvg__xformIdentity(m);
@@ -1692,6 +1702,7 @@ static void nsvg__parseTransform(float* xform, const char* str)
 	nsvg__xformIdentity(xform);
 	while (*str)
 	{
+		nsvg__xformIdentity(t);
 		if (strncmp(str, "matrix", 6) == 0)
 			len = nsvg__parseMatrix(t, str);
 		else if (strncmp(str, "translate", 9) == 0)
@@ -1708,12 +1719,7 @@ static void nsvg__parseTransform(float* xform, const char* str)
 			++str;
 			continue;
 		}
-		if (len != 0) {
-			str += len;
-		} else {
-			++str;
-			continue;
-		}
+		str += len;
 
 		nsvg__xformPremultiply(xform, t);
 	}

@@ -199,6 +199,54 @@ static void test_inverse(void)
 	}
 }
 
+static void test_transforms(void)
+{
+	const char* invalid[] = {
+		"matrix()", "matrix(1 2 3 4 5)", "matrix(1 2 3 4 5 6 7)",
+		"translate()", "translate(1 2 3)", "scale()", "scale(1 2 3)",
+		"rotate()", "rotate(1 2)", "rotate(1 2 3 4)",
+		"skewX()", "skewX(1 2)", "skewY()", "skewY(1 2)",
+		"matrix", "translate", "scale", "rotate", "skewX", "skewY",
+		"matrix(1 2 3 4 5 6", "translate(2", "scale(2", "rotate(2",
+		"skewX(2", "skewY(2", "scale 2)", "scale(1e999)", "scale(.)"
+	};
+	const struct { const char* text; float matrix[6]; } valid[] = {
+		{"matrix(2 1 3 4 5 6)", {2,1,3,4,5,6}},
+		{"translate(2)", {1,0,0,1,2,0}}, {"translate(2,3)", {1,0,0,1,2,3}},
+		{"scale(2)", {2,0,0,2,0,0}}, {"scale(2,3)", {2,0,0,3,0,0}},
+		{"rotate(90)", {0,1,-1,0,0,0}}, {"rotate(90,2,3)", {0,1,-1,0,5,1}},
+		{"skewX(45)", {1,0,1,1,0,0}}, {"skewY(45)", {1,1,0,1,0,0}},
+		{"translate (7,9) scale(2 3)", {2,0,0,3,7,9}},
+		{"scale(.5,-2e-1)", {.5f,0,0,-.2f,0,0}}
+	};
+	size_t i;
+	int j, mixed;
+	for (i = 0; i < sizeof(invalid)/sizeof(invalid[0]); i++) {
+		for (mixed = 0; mixed < 2; mixed++) {
+			char text[256];
+			float actual[6];
+			const float expected[][6] = {{1,0,0,1,0,0}, {2,0,0,3,7,9}};
+			snprintf(text, sizeof(text), mixed ? "translate(7 9) %s scale(2 3)" : "%s", invalid[i]);
+			nsvg__parseTransform(actual, text);
+			for (j = 0; j < 6; j++) assert(fabsf(actual[j] - expected[mixed][j]) < 1e-6f);
+		}
+	}
+	for (i = 0; i < sizeof(valid)/sizeof(valid[0]); i++) {
+		float actual[6];
+		nsvg__parseTransform(actual, valid[i].text);
+		for (j = 0; j < 6; j++) assert(fabsf(actual[j] - valid[i].matrix[j]) < 1e-6f);
+	}
+	{
+		NSVGimage* image = parse("<svg width=\"64\" height=\"64\"><defs><linearGradient id=\"g\" gradientTransform=\"translate(2) scale()\"><stop stop-color=\"red\"/></linearGradient></defs><rect width=\"10\" height=\"10\" transform=\"translate(7 9) rotate(1 2) scale(2 3)\" fill=\"url(#g)\"/></svg>");
+		NSVGshape* shape = image->shapes;
+		assert(shape != NULL && shape->fill.type == NSVG_PAINT_LINEAR_GRADIENT);
+		assert(shape->bounds[0] == 7 && shape->bounds[1] == 9);
+		assert(shape->bounds[2] == 27 && shape->bounds[3] == 39);
+		for (j = 0; j < 6; j++) assert(isfinite(shape->fill.gradient->xform[j]));
+		nsvgDelete(image);
+	}
+}
+
 int main(void)
 {
 	test_css_recursion();
@@ -206,6 +254,7 @@ int main(void)
 	test_dashes();
 	test_numeric();
 	test_inverse();
+	test_transforms();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
