@@ -42,9 +42,36 @@ static void test_css_recursion(void)
 	}
 }
 
+static void test_css_bounds(void)
+{
+	const char* declarations[] = {
+		"", " ", "; ; ", "fill", "fill red", ":red", "fill: #ff0000",
+		"fill: #ff0000;", "  fill  :  #ff0000  ;  ", ";bad;fill:#ff0000;bad"
+	};
+	size_t i;
+	int inlineStyle;
+	NSVGimage* image = parse("<style>.285713{ <path class=\"285713>");
+	nsvgDelete(image);
+	for (inlineStyle = 0; inlineStyle < 2; inlineStyle++) {
+		for (i = 0; i < sizeof(declarations)/sizeof(declarations[0]); i++) {
+			char svg[512];
+			if (inlineStyle)
+				snprintf(svg, sizeof(svg), "<svg><rect style=\"%s\" width=\"1\" height=\"1\"/></svg>", declarations[i]);
+			else
+				snprintf(svg, sizeof(svg), "<svg><style>.a{%s}</style><rect class=\"a\" width=\"1\" height=\"1\"/></svg>", declarations[i]);
+			image = parse(svg);
+			assert(image->shapes != NULL);
+			assert((image->shapes->fill.color & 0xffffff) ==
+				(i >= 6 ? NSVG_RGB(255, 0, 0) : NSVG_RGB(0, 0, 0)));
+			nsvgDelete(image);
+		}
+	}
+}
+
 int main(void)
 {
 	test_css_recursion();
+	test_css_bounds();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
