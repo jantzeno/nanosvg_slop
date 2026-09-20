@@ -1963,6 +1963,8 @@ static int nsvg__parseNameValue(NSVGparser* p, const char* start, const char* en
 	if (n) memcpy(value, val, n);
 	value[n] = 0;
 
+	// Class matching belongs to SVG attributes, not CSS declarations.
+	if (strcmp(name, "class") == 0) return 0;
 	return nsvg__parseAttr(p, name, value);
 }
 
