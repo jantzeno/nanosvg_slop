@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 
 #define NANOSVG_IMPLEMENTATION
 #include "nanosvg.h"
@@ -107,11 +108,87 @@ static void test_dashes(void)
 	}
 }
 
+static void test_numeric(void)
+{
+	const char* cases[] = {
+		"<svg width=\"64\" height=\"64\"><path d=\"M-30000000,0 L10,64 L20,0 Z\"/></svg>",
+		"<svg width=\"64\" height=\"64\"><path d=\"M30000000,0 L-30000000,64 L20,0 Z\"/></svg>",
+		"<svg width=\"64\" height=\"64\"><path d=\"M0,0 L1e999,20 L20,40 Z\"/></svg>",
+		"<svg width=\"64\" height=\"64\"><path d=\"M0,0 L1e999,20 L20,40\" fill=\"none\" stroke=\"black\" stroke-linejoin=\"round\"/></svg>",
+		"<svg width=\"64\" height=\"64\"><path d=\"M10,10 L50,50\" stroke=\"red\" stroke-width=\"10662107277\"/></svg>",
+		"<svg width=\"64\" height=\"64\"><path d=\"M10,10 L50,50\" stroke=\"red\" stroke-width=\"1e999\" stroke-linecap=\"round\"/></svg>",
+		"<svg width=\"64\" height=\"64\"><path d=\"M0,0 A8 57.1E2857 0 1 1 0 0.2\"/></svg>",
+		"<svg width=\"64\" height=\"64\"><path d=\"M0,0 A1e30 1e30 0 0 1 20 20\"/></svg>",
+		"<svg width=\"10\" height=\"10\"><polyline points=\"0,0 99999999,0\" fill=\"none\" stroke=\"#000\" stroke-width=\"1\"/></svg>"
+	};
+	unsigned char pixels[64*64*4];
+	float special[] = {NAN, INFINITY, -INFINITY, FLT_MAX, -FLT_MAX};
+	float belowMax = nextafterf((float)INT_MAX, 0);
+	float aboveMin = nextafterf((float)INT_MIN, 0);
+	size_t i;
+	NSVGimage* image;
+	assert(nsvg__roundf_clamp(NAN) == 0);
+	assert(nsvg__roundf_clamp(INFINITY) == INT_MAX);
+	assert(nsvg__roundf_clamp(-INFINITY) == INT_MIN);
+	assert(nsvg__roundf_clamp(FLT_MAX) == INT_MAX);
+	assert(nsvg__roundf_clamp(-FLT_MAX) == INT_MIN);
+	assert(nsvg__roundf_clamp((float)INT_MAX) == INT_MAX);
+	assert(nsvg__roundf_clamp((float)INT_MIN) == INT_MIN);
+	assert(nsvg__roundf_clamp(belowMax) == (int)belowMax);
+	assert(nsvg__roundf_clamp(aboveMin) == (int)aboveMin);
+	assert(nsvg__roundf_clamp(1.5f) == 2 && nsvg__roundf_clamp(-1.5f) == -2);
+	assert(nsvg__iadd_sat(INT_MAX, 1) == INT_MAX);
+	assert(nsvg__iadd_sat(INT_MIN, -1) == INT_MIN);
+	assert(nsvg__iadd_sat(INT_MAX, INT_MAX) == INT_MAX);
+	assert(nsvg__iadd_sat(INT_MIN, INT_MIN) == INT_MIN);
+	assert(nsvg__iadd_sat(INT_MAX, INT_MIN) == -1);
+	assert(nsvg__iadd_sat(10, -20) == -10);
+	assert(nsvg__curveDivs(1, NSVG_PI, 0.25f) == 3);
+	assert(nsvg__curveDivs(FLT_MAX, NSVG_PI, 0.25f) == 2);
+	for (i = 0; i < sizeof(special)/sizeof(special[0]); i++) {
+		NSVGparser* p = nsvg__createParser();
+		float args[7] = {8, special[i], 0, 0, 1, 20, 20};
+		float x = 0, y = 0;
+		int j;
+		assert(p != NULL);
+		nsvg__moveTo(p, x, y);
+		nsvg__pathArcTo(p, &x, &y, args, 0);
+		assert(x == 20 && y == 20);
+		for (j = 0; j < p->npts*2; j++) assert(isfinite(p->pts[j]));
+		args[1] = 8;
+		args[2] = special[i];
+		args[5] = 30;
+		nsvg__pathArcTo(p, &x, &y, args, 0);
+		assert(x == 30 && y == 20);
+		for (j = 0; j < p->npts*2; j++) assert(isfinite(p->pts[j]));
+		args[5] = NAN;
+		nsvg__pathArcTo(p, &x, &y, args, 0);
+		assert(x == 30 && y == 20);
+		nsvg__deleteParser(p);
+		assert(nsvg__curveDivs(special[i], NSVG_PI, 0.25f) == 2);
+		assert(nsvg__curveDivs(1, special[i], 0.25f) == 2);
+	}
+	for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+		image = parse(cases[i]);
+		render(image, pixels);
+		nsvgDelete(image);
+	}
+	image = parse("<svg width=\"64\" height=\"64\"><rect x=\"8\" y=\"8\" width=\"32\" height=\"32\" fill=\"#ff0000\"/></svg>");
+	render(image, pixels);
+	for (i = 0; i < 64*64; i++) {
+		int inside = i%64 >= 8 && i%64 < 40 && i/64 >= 8 && i/64 < 40;
+		assert(pixels[i*4+3] == (inside ? 255 : 0));
+		if (inside) assert(pixels[i*4] == 255 && pixels[i*4+1] == 0 && pixels[i*4+2] == 0);
+	}
+	nsvgDelete(image);
+}
+
 int main(void)
 {
 	test_css_recursion();
 	test_css_bounds();
 	test_dashes();
+	test_numeric();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }

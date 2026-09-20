@@ -2245,11 +2245,13 @@ static void nsvg__pathArcTo(NSVGparser* p, float* cpx, float* cpy, float* args, 
 		x2 = args[5];
 		y2 = args[6];
 	}
+	if (!isfinite(x2) || !isfinite(y2)) return;
 
 	dx = x1 - x2;
 	dy = y1 - y2;
 	d = sqrtf(dx*dx + dy*dy);
-	if (d < 1e-6f || rx < 1e-6f || ry < 1e-6f) {
+	if (d < 1e-6f || rx < 1e-6f || ry < 1e-6f ||
+		!isfinite(d) || !isfinite(rx) || !isfinite(ry) || !isfinite(rotx)) {
 		// The arc degenerates to a line
 		nsvg__lineTo(p, x2, y2);
 		*cpx = x2;
@@ -2302,6 +2304,14 @@ static void nsvg__pathArcTo(NSVGparser* p, float* cpx, float* cpy, float* args, 
 		da -= 2 * NSVG_PI;
 	else if (fs == 1 && da < 0)
 		da += 2 * NSVG_PI;
+
+	// Invalid intermediate geometry must not reach the subdivision cast.
+	if (!isfinite(da) || !isfinite(a1) || !isfinite(cx) || !isfinite(cy)) {
+		nsvg__lineTo(p, x2, y2);
+		*cpx = x2;
+		*cpy = y2;
+		return;
+	}
 
 	// Approximate the arc using cubic spline segments.
 	t[0] = cosrx; t[1] = sinrx;

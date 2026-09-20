@@ -79,6 +79,7 @@ void nsvgDeleteRasterizer(NSVGrasterizer*);
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #define NSVG__SUBSAMPLES	5
 #define NSVG__FIXSHIFT		10
@@ -333,6 +334,23 @@ static float nsvg__normalize(float *x, float* y)
 static float nsvg__absf(float x) { return x < 0 ? -x : x; }
 static float nsvg__roundf(float x) { return (x >= 0) ? floorf(x + 0.5) : ceilf(x - 0.5); }
 
+static int nsvg__roundf_clamp(float x)
+{
+	float rounded;
+	if (!isfinite(x)) return x > 0 ? INT_MAX : (x < 0 ? INT_MIN : 0);
+	rounded = nsvg__roundf(x);
+	if ((double)rounded >= (double)INT_MAX) return INT_MAX;
+	if ((double)rounded <= (double)INT_MIN) return INT_MIN;
+	return (int)rounded;
+}
+
+static int nsvg__iadd_sat(int a, int b)
+{
+	if (b > 0 && a > INT_MAX - b) return INT_MAX;
+	if (b < 0 && a < INT_MIN - b) return INT_MIN;
+	return a + b;
+}
+
 static void nsvg__flattenCubicBez(NSVGrasterizer* r,
 								  float x1, float y1, float x2, float y2,
 								  float x3, float y3, float x4, float y4,
@@ -559,7 +577,7 @@ static void nsvg__roundJoin(NSVGrasterizer* r, NSVGpoint* left, NSVGpoint* right
 	if (da < NSVG_PI) da += NSVG_PI*2;
 	if (da > NSVG_PI) da -= NSVG_PI*2;
 
-	n = (int)ceilf((nsvg__absf(da) / NSVG_PI) * (float)ncap);
+	n = nsvg__roundf_clamp(ceilf((nsvg__absf(da) / NSVG_PI) * (float)ncap));
 	if (n < 2) n = 2;
 	if (n > ncap) n = ncap;
 
@@ -602,9 +620,12 @@ static void nsvg__straightJoin(NSVGrasterizer* r, NSVGpoint* left, NSVGpoint* ri
 static int nsvg__curveDivs(float r, float arc, float tol)
 {
 	float da = acosf(r / (r + tol)) * 2.0f;
-	int divs = (int)ceilf(arc / da);
-	if (divs < 2) divs = 2;
-	return divs;
+	float divs;
+	// Huge radii can round the ratio to one; use the minimum subdivision.
+	if (!(da > 0.0f)) return 2;
+	divs = ceilf(arc / da);
+	if (!isfinite(divs) || (double)divs >= (double)INT_MAX) return 2;
+	return divs < 2 ? 2 : (int)divs;
 }
 
 static void nsvg__expandStroke(NSVGrasterizer* r, NSVGpoint* points, int npoints, int closed, int lineJoin, int lineCap, float lineWidth)
@@ -886,11 +907,8 @@ static NSVGactiveEdge* nsvg__addActive(NSVGrasterizer* r, NSVGedge* e, float sta
 	float dxdy = (e->x1 - e->x0) / (e->y1 - e->y0);
 //	STBTT_assert(e->y0 <= start_point);
 	// round dx down to avoid going too far
-	if (dxdy < 0)
-		z->dx = (int)(-nsvg__roundf(NSVG__FIX * -dxdy));
-	else
-		z->dx = (int)nsvg__roundf(NSVG__FIX * dxdy);
-	z->x = (int)nsvg__roundf(NSVG__FIX * (e->x0 + dxdy * (startPoint - e->y0)));
+	z->dx = nsvg__roundf_clamp(NSVG__FIX * dxdy);
+	z->x = nsvg__roundf_clamp(NSVG__FIX * (e->x0 + dxdy * (startPoint - e->y0)));
 //	z->x -= off_x * FIX;
 	z->ey = e->y1;
 	z->next = 0;
@@ -1159,7 +1177,7 @@ static void nsvg__rasterizeSortedEdges(NSVGrasterizer *r, float tx, float ty, fl
 //					NSVG__assert(z->valid);
 					nsvg__freeActive(r, z);
 				} else {
-					z->x += z->dx; // advance to position for current scanline
+					z->x = nsvg__iadd_sat(z->x, z->dx); // advance to position for current scanline
 					step = &((*step)->next); // advance through list
 				}
 			}
