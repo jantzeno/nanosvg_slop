@@ -535,7 +535,7 @@ static void nsvg__xformInverse(float* inv, float* t)
 {
 	double invdet, det = (double)t[0] * t[3] - (double)t[2] * t[1];
 	if (det > -1e-6 && det < 1e-6) {
-		nsvg__xformIdentity(t);
+		nsvg__xformIdentity(inv);
 		return;
 	}
 	invdet = 1.0 / det;

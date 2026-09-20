@@ -183,12 +183,29 @@ static void test_numeric(void)
 	nsvgDelete(image);
 }
 
+static void test_inverse(void)
+{
+	const float matrices[][6] = {{0,0,0,0,0,0}, {1,2,2,4,3,4}, {2,1,1,3,4,5}};
+	const float identity[6] = {1,0,0,1,0,0};
+	size_t i;
+	for (i = 0; i < sizeof(matrices)/sizeof(matrices[0]); i++) {
+		float input[6], output[6] = {42,42,42,42,42,42};
+		int j;
+		memcpy(input, matrices[i], sizeof(input));
+		nsvg__xformInverse(output, input);
+		assert(memcmp(input, matrices[i], sizeof(input)) == 0);
+		if (i == 2) nsvg__xformMultiply(output, input);
+		for (j = 0; j < 6; j++) assert(fabsf(output[j] - identity[j]) < 1e-6f);
+	}
+}
+
 int main(void)
 {
 	test_css_recursion();
 	test_css_bounds();
 	test_dashes();
 	test_numeric();
+	test_inverse();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
