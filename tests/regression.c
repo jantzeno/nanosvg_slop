@@ -326,6 +326,62 @@ static void test_gradients(void)
 	}
 }
 
+static void test_visibility(void)
+{
+	const struct { const char* parent; const char* child; int visible; } cases[] = {
+		{"", "", 1}, {"visibility='hidden'", "", 0},
+		{"visibility='hidden'", "visibility='visible'", 1},
+		{"visibility='hidden'", "visibility='inherit'", 0},
+		{"visibility='hidden'", "visibility='invalid'", 0},
+		{"visibility='visible'", "visibility='hidden'", 0},
+		{"visibility='collapse'", "", 0},
+		{"visibility='collapse'", "visibility='visible'", 1},
+		{"class='hide'", "class='show'", 1},
+		{"class='hide'", "", 0},
+		{"style='visibility:hidden'", "style='visibility:visible'", 1},
+		{"style='visibility:hidden'", "style='visibility:inherit'", 0},
+		{"display='none'", "visibility='visible' display='inline'", 0},
+		{"display='none'", "display='inline' visibility='visible'", 0},
+		{"class='gone'", "class='show'", 0},
+		{"style='display:none;visibility:hidden'", "style='display:inline;visibility:visible'", 0}
+	};
+	size_t i;
+	for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+		char svg[1024];
+		unsigned char pixels[64*64*4];
+		NSVGimage* image;
+		snprintf(svg, sizeof(svg), "<svg width='64' height='64'><style>.hide{visibility:hidden;}.show{visibility:visible;}.gone{display:none;}</style><g %s><g><rect %s x='8' y='8' width='16' height='16'/></g></g><rect x='32' y='8' width='16' height='16'/></svg>", cases[i].parent, cases[i].child);
+		image = parse(svg);
+		assert(image->shapes != NULL && image->shapes->next != NULL);
+		assert(image->shapes->flags == (cases[i].visible ? NSVG_FLAGS_VISIBLE : 0));
+		assert(image->shapes->next->flags == NSVG_FLAGS_VISIBLE);
+		render(image, pixels);
+		assert(pixels[(16*64+16)*4+3] == (cases[i].visible ? 255 : 0));
+		assert(pixels[(16*64+40)*4+3] == 255);
+		nsvgDelete(image);
+	}
+}
+
+static void test_examples(void)
+{
+	const char* files[] = {"example/nano.svg", "example/drawing.svg", "example/23.svg"};
+	size_t i;
+	for (i = 0; i < sizeof(files)/sizeof(files[0]); i++) {
+		NSVGimage* image = nsvgParseFromFile(files[i], "px", 96);
+		NSVGrasterizer* rasterizer = nsvgCreateRasterizer();
+		unsigned char pixels[64*64*4];
+		int j, visible = 0;
+		assert(image != NULL && image->shapes != NULL && rasterizer != NULL);
+		assert(isfinite(image->width) && isfinite(image->height));
+		assert(image->width > 0 && image->height > 0);
+		nsvgRasterize(rasterizer, image, 0, 0, 64/fmaxf(image->width, image->height), pixels, 64, 64, 64*4);
+		for (j = 0; j < 64*64; j++) visible |= pixels[j*4+3];
+		assert(visible != 0);
+		nsvgDeleteRasterizer(rasterizer);
+		nsvgDelete(image);
+	}
+}
+
 int main(void)
 {
 	test_css_recursion();
@@ -336,6 +392,8 @@ int main(void)
 	test_transforms();
 	test_arcs();
 	test_gradients();
+	test_visibility();
+	test_examples();
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
