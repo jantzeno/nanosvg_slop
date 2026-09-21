@@ -120,13 +120,13 @@ parse_file(const std::filesystem::path &filename, std::string_view units = "px",
 
 // Shared implementation details; not part of the public API.
 namespace nanosvg::detail {
-inline std::expected<std::size_t, Error> raster_buffer_size(int w, int h, int stride) {
-    if (w < 0 || h < 0 || stride < 0) return std::unexpected(Error::invalid_argument);
-    if (w == 0 || h == 0) return 0;
-    const auto row = static_cast<std::size_t>(w) * 4;
-    if (row / 4 != static_cast<std::size_t>(w)) return std::unexpected(Error::size_overflow);
+inline std::expected<std::size_t, Error> raster_buffer_size(int width, int height, int stride) {
+    if (width < 0 || height < 0 || stride < 0) return std::unexpected(Error::invalid_argument);
+    if (width == 0 || height == 0) return 0;
+    const auto row = static_cast<std::size_t>(width) * 4;
+    if (row / 4 != static_cast<std::size_t>(width)) return std::unexpected(Error::size_overflow);
     if (row > static_cast<std::size_t>(stride)) return std::unexpected(Error::invalid_argument);
-    const auto rows = static_cast<std::size_t>(h - 1);
+    const auto rows = static_cast<std::size_t>(height - 1);
     if (rows > (std::numeric_limits<std::size_t>::max() - row) / static_cast<std::size_t>(stride))
         return std::unexpected(Error::size_overflow);
     return rows * static_cast<std::size_t>(stride) + row;
@@ -149,25 +149,25 @@ namespace nanosvg {
 namespace detail {
 using std::isfinite;
 using std::isnan;
-constexpr double pi = std::numbers::pi;
+constexpr double circlePi = std::numbers::pi;
 constexpr double kappa90 = 0.5522847493;
 constexpr double epsilon = 1e-12;
 constexpr Transform identity{1, 0, 0, 1, 0, 0};
-constexpr Color rgb(Color r, Color g, Color b) {
-    return r | (g << 8) | (b << 16);
+constexpr Color rgb(Color red, Color green, Color blue) {
+    return red | (green << 8) | (blue << 16);
 }
-constexpr bool is_space(char c) {
-    return std::string_view(" \t\n\v\f\r").contains(c);
+constexpr bool is_space(char character) {
+    return std::string_view(" \t\n\v\f\r").contains(character);
 }
-constexpr bool is_digit(char c) {
-    return c >= '0' && c <= '9';
+constexpr bool is_digit(char character) {
+    return character >= '0' && character <= '9';
 }
 // Preserve the original operand choice for NaNs and signed zero.
-constexpr double min_value(double a, double b) {
-    return a < b ? a : b;
+constexpr double min_value(double lhs, double rhs) {
+    return lhs < rhs ? lhs : rhs;
 }
-constexpr double max_value(double a, double b) {
-    return a > b ? a : b;
+constexpr double max_value(double lhs, double rhs) {
+    return lhs > rhs ? lhs : rhs;
 }
 static std::string_view trim(std::string_view text) {
     const auto first = text.find_first_not_of(" \t\n\v\f\r");
@@ -184,15 +184,15 @@ struct Coordinate {
     CoordinateUnit units = CoordinateUnit::user;
 };
 struct LinearData {
-    Coordinate x1{0, CoordinateUnit::percent}, y1{0, CoordinateUnit::percent};
-    Coordinate x2{100, CoordinateUnit::percent}, y2{0, CoordinateUnit::percent};
+    Coordinate startX{0, CoordinateUnit::percent}, startY{0, CoordinateUnit::percent};
+    Coordinate endX{100, CoordinateUnit::percent}, endY{0, CoordinateUnit::percent};
 };
 struct RadialData {
-    Coordinate cx{50, CoordinateUnit::percent}, cy{50, CoordinateUnit::percent};
-    Coordinate r{50, CoordinateUnit::percent}, fx{}, fy{};
+    Coordinate centerX{50, CoordinateUnit::percent}, centerY{50, CoordinateUnit::percent};
+    Coordinate radius{50, CoordinateUnit::percent}, focusX{}, focusY{};
 };
 struct GradientData {
-    std::string id, ref;
+    std::string identifier, ref;
     std::variant<LinearData, RadialData> geometry;
     Spread spread = Spread::pad;
     GradientUnits units = GradientUnits::object;
@@ -200,11 +200,11 @@ struct GradientData {
     std::vector<GradientStop> stops;
 };
 struct GradientReference {
-    std::string id;
+    std::string identifier;
 };
 using PaintSource = std::variant<std::monostate, Color, GradientReference>;
 struct Attributes {
-    std::string id;
+    std::string identifier;
     Transform xform = identity;
     PaintSource fill = Color{0}, stroke;
     double opacity = 1, fillOpacity = 1, strokeOpacity = 1;
@@ -231,78 +231,85 @@ struct PendingShape {
     double fillOpacity, strokeOpacity;
 };
 
-constexpr Transform translation(double x, double y) {
-    return {1, 0, 0, 1, x, y};
+constexpr Transform translation(double offsetX, double offsetY) {
+    return {1, 0, 0, 1, offsetX, offsetY};
 }
-constexpr Transform scaling(double x, double y) {
-    return {x, 0, 0, y, 0, 0};
+constexpr Transform scaling(double scaleX, double scaleY) {
+    return {scaleX, 0, 0, scaleY, 0, 0};
 }
-static Transform rotation(double a) {
-    const double c = std::cos(a), s = std::sin(a);
-    return {c, s, -s, c, 0, 0};
+static Transform rotation(double angle) {
+    const double cosine = std::cos(angle), sine = std::sin(angle);
+    return {cosine, sine, -sine, cosine, 0, 0};
 }
-// Apply t, then s, matching the original SVG transform convention.
-constexpr Transform multiply(const Transform &t, const Transform &s) {
-    return {t[0] * s[0] + t[1] * s[2], t[0] * s[1] + t[1] * s[3],        t[2] * s[0] + t[3] * s[2],
-            t[2] * s[1] + t[3] * s[3], t[4] * s[0] + t[5] * s[2] + s[4], t[4] * s[1] + t[5] * s[3] + s[5]};
+// Apply first, then second, matching the original SVG transform convention.
+constexpr Transform multiply(const Transform &first, const Transform &second) {
+    return {first[0] * second[0] + first[1] * second[2],
+            first[0] * second[1] + first[1] * second[3],
+            first[2] * second[0] + first[3] * second[2],
+            first[2] * second[1] + first[3] * second[3],
+            first[4] * second[0] + first[5] * second[2] + second[4],
+            first[4] * second[1] + first[5] * second[3] + second[5]};
 }
-constexpr Transform inverse(const Transform &t) {
-    const double det = t[0] * t[3] - t[2] * t[1];
+constexpr Transform inverse(const Transform &xform) {
+    const double det = xform[0] * xform[3] - xform[2] * xform[1];
     if (det > -1e-6 && det < 1e-6) return identity;
-    const double r = 1 / det;
-    return {t[3] * r,
-            -t[1] * r,
-            -t[2] * r,
-            t[0] * r,
-            (t[2] * t[5] - t[3] * t[4]) * r,
-            (t[1] * t[4] - t[0] * t[5]) * r};
+    const double invDet = 1 / det;
+    return {xform[3] * invDet,
+            -xform[1] * invDet,
+            -xform[2] * invDet,
+            xform[0] * invDet,
+            (xform[2] * xform[5] - xform[3] * xform[4]) * invDet,
+            (xform[1] * xform[4] - xform[0] * xform[5]) * invDet};
 }
-constexpr Point transform_point(Point p, const Transform &t) {
-    return {p.x * t[0] + p.y * t[2] + t[4], p.x * t[1] + p.y * t[3] + t[5]};
+constexpr Point transform_point(Point point, const Transform &xform) {
+    return {point.x * xform[0] + point.y * xform[2] + xform[4], point.x * xform[1] + point.y * xform[3] + xform[5]};
 }
-constexpr Point transform_vector(Point p, const Transform &t) {
-    return {p.x * t[0] + p.y * t[2], p.x * t[1] + p.y * t[3]};
+constexpr Point transform_vector(Point vector, const Transform &xform) {
+    return {vector.x * xform[0] + vector.y * xform[2], vector.x * xform[1] + vector.y * xform[3]};
 }
-static double average_scale(const Transform &t) {
-    return std::midpoint(std::hypot(t[0], t[2]), std::hypot(t[1], t[3]));
+static double average_scale(const Transform &xform) {
+    return std::midpoint(std::hypot(xform[0], xform[2]), std::hypot(xform[1], xform[3]));
 }
-constexpr Bounds merge_bounds(Bounds a, const Bounds &b) {
-    for (std::size_t i = 0; i < a.size(); ++i)
-        a[i] = i < 2 ? std::min(a[i], b[i]) : std::max(a[i], b[i]);
-    return a;
+constexpr Bounds merge_bounds(Bounds bounds, const Bounds &other) {
+    for (std::size_t axis = 0; axis < bounds.size(); ++axis)
+        bounds[axis] = axis < 2 ? std::min(bounds[axis], other[axis]) : std::max(bounds[axis], other[axis]);
+    return bounds;
 }
-constexpr bool point_in_bounds(Point p, const Bounds &b) {
-    return p.x >= b[0] && p.x <= b[2] && p.y >= b[1] && p.y <= b[3];
+constexpr bool point_in_bounds(Point point, const Bounds &bounds) {
+    return point.x >= bounds[0] && point.x <= bounds[2] && point.y >= bounds[1] && point.y <= bounds[3];
 }
-constexpr double eval_bezier(double t, double p0, double p1, double p2, double p3) {
-    const double it = 1 - t;
-    return it * it * it * p0 + 3 * it * it * t * p1 + 3 * it * t * t * p2 + t * t * t * p3;
+constexpr double eval_bezier(double ratio, double start, double control1, double control2, double end) {
+    const double inverseRatio = 1 - ratio;
+    return inverseRatio * inverseRatio * inverseRatio * start +
+           3 * inverseRatio * inverseRatio * ratio * control1 +
+           3 * inverseRatio * ratio * ratio * control2 + ratio * ratio * ratio * end;
 }
 static Bounds curve_bounds(std::span<const Point, 4> curve) {
-    const auto [v0, v1, v2, v3] = std::array{curve[0], curve[1], curve[2], curve[3]};
-    Bounds bounds{min_value(v0.x, v3.x), min_value(v0.y, v3.y), max_value(v0.x, v3.x), max_value(v0.y, v3.y)};
-    if (point_in_bounds(v1, bounds) && point_in_bounds(v2, bounds)) return bounds;
-    for (int i = 0; i < 2; ++i) {
-        const auto v = i == 0 ? std::array{v0.x, v1.x, v2.x, v3.x} : std::array{v0.y, v1.y, v2.y, v3.y};
-        const double a = -3 * v[0] + 9 * v[1] - 9 * v[2] + 3 * v[3];
-        const double b = 6 * v[0] - 12 * v[1] + 6 * v[2];
-        const double c = 3 * v[1] - 3 * v[0];
+    const auto [start, control1, control2, end] = std::array{curve[0], curve[1], curve[2], curve[3]};
+    Bounds bounds{min_value(start.x, end.x), min_value(start.y, end.y), max_value(start.x, end.x), max_value(start.y, end.y)};
+    if (point_in_bounds(control1, bounds) && point_in_bounds(control2, bounds)) return bounds;
+    for (int axis = 0; axis < 2; ++axis) {
+        const auto coords = axis == 0 ? std::array{start.x, control1.x, control2.x, end.x}
+                                      : std::array{start.y, control1.y, control2.y, end.y};
+        const double quadratic = -3 * coords[0] + 9 * coords[1] - 9 * coords[2] + 3 * coords[3];
+        const double linear = 6 * coords[0] - 12 * coords[1] + 6 * coords[2];
+        const double constant = 3 * coords[1] - 3 * coords[0];
         std::array<double, 2> roots{};
         std::size_t count = 0;
-        if (std::abs(a) < epsilon) {
-            if (std::abs(b) > epsilon) roots[count++] = -c / b;
+        if (std::abs(quadratic) < epsilon) {
+            if (std::abs(linear) > epsilon) roots[count++] = -constant / linear;
         } else {
-            const double discriminant = b * b - 4 * c * a;
+            const double discriminant = linear * linear - 4 * constant * quadratic;
             if (discriminant > epsilon) {
-                roots[count++] = (-b + std::sqrt(discriminant)) / (2 * a);
-                roots[count++] = (-b - std::sqrt(discriminant)) / (2 * a);
+                roots[count++] = (-linear + std::sqrt(discriminant)) / (2 * quadratic);
+                roots[count++] = (-linear - std::sqrt(discriminant)) / (2 * quadratic);
             }
         }
-        for (double t : std::span(roots).first(count)) {
-            if (!(t > epsilon && t < 1 - epsilon)) continue;
-            const double value = eval_bezier(t, v[0], v[1], v[2], v[3]);
-            bounds[i] = min_value(bounds[i], value);
-            bounds[i + 2] = max_value(bounds[i + 2], value);
+        for (double ratio : std::span(roots).first(count)) {
+            if (!(ratio > epsilon && ratio < 1 - epsilon)) continue;
+            const double value = eval_bezier(ratio, coords[0], coords[1], coords[2], coords[3]);
+            bounds[axis] = min_value(bounds[axis], value);
+            bounds[axis + 2] = max_value(bounds[axis + 2], value);
         }
     }
     return bounds;
@@ -311,10 +318,10 @@ static Bounds local_bounds(const Shape &shape, const Transform &xform) {
     Bounds bounds{};
     bool first = true;
     for (const auto &path : shape.paths) {
-        for (std::size_t i = 0; i + 3 < path.points.size(); i += 3) {
+        for (std::size_t segment = 0; segment + 3 < path.points.size(); segment += 3) {
             std::array<Point, 4> curve;
-            for (std::size_t j = 0; j < curve.size(); ++j)
-                curve[j] = transform_point(path.points[i + j], xform);
+            for (std::size_t pointIndex = 0; pointIndex < curve.size(); ++pointIndex)
+                curve[pointIndex] = transform_point(path.points[segment + pointIndex], xform);
             const auto box = curve_bounds(curve);
             bounds = first ? box : merge_bounds(bounds, box);
             first = false;
@@ -348,24 +355,24 @@ static Number read_number(std::string_view text) {
 }
 // Retain the SVG token boundary even for malformed numbers such as "1e+".
 static Number parse_number(std::string_view text) {
-    std::size_t n = 0;
-    if (n < text.size() && (text[n] == '+' || text[n] == '-')) ++n;
-    while (n < text.size() && is_digit(text[n]))
-        ++n;
-    if (n < text.size() && text[n] == '.') {
-        ++n;
-        while (n < text.size() && is_digit(text[n]))
-            ++n;
+    std::size_t length = 0;
+    if (length < text.size() && (text[length] == '+' || text[length] == '-')) ++length;
+    while (length < text.size() && is_digit(text[length]))
+        ++length;
+    if (length < text.size() && text[length] == '.') {
+        ++length;
+        while (length < text.size() && is_digit(text[length]))
+            ++length;
     }
-    if (n < text.size() && (text[n] == 'e' || text[n] == 'E') &&
-        (n + 1 == text.size() || (text[n + 1] != 'm' && text[n + 1] != 'x'))) {
-        ++n;
-        if (n < text.size() && (text[n] == '+' || text[n] == '-')) ++n;
-        while (n < text.size() && is_digit(text[n]))
-            ++n;
+    if (length < text.size() && (text[length] == 'e' || text[length] == 'E') &&
+        (length + 1 == text.size() || (text[length + 1] != 'm' && text[length + 1] != 'x'))) {
+        ++length;
+        if (length < text.size() && (text[length] == '+' || text[length] == '-')) ++length;
+        while (length < text.size() && is_digit(text[length]))
+            ++length;
     }
-    auto result = read_number(text.substr(0, n));
-    result.consumed = n;
+    auto result = read_number(text.substr(0, length));
+    result.consumed = length;
     return result;
 }
 constexpr bool is_coordinate(std::string_view text) {
@@ -380,13 +387,13 @@ static Token next_path_item(std::string_view text, bool arcFlag = false) {
     const auto start = text.find_first_not_of(" \t\n\v\f\r,");
     if (start == text.npos) return {{}, text.size()};
     auto tail = text.substr(start);
-    const auto n =
+    const auto length =
         arcFlag && (tail.front() == '0' || tail.front() == '1')
             ? 1
             : ((tail.front() == '+' || tail.front() == '-' || tail.front() == '.' || is_digit(tail.front()))
                    ? parse_number(tail).consumed
                    : 1);
-    return {tail.substr(0, n), start + n};
+    return {tail.substr(0, length), start + length};
 }
 static CoordinateUnit parse_units(std::string_view text) {
     if (text.starts_with("px")) return CoordinateUnit::px;
@@ -404,29 +411,29 @@ static Coordinate parse_coordinate_raw(std::string_view text) {
     const auto number = parse_number(text);
     return {number.value, parse_units(text.substr(number.consumed))};
 }
-static double convert_to_pixels(Coordinate c, double origin, double length, double dpi, double fontSize) {
-    switch (c.units) {
+static double convert_to_pixels(Coordinate coord, double origin, double length, double dpi, double fontSize) {
+    switch (coord.units) {
     case CoordinateUnit::pt:
-        return c.value / 72 * dpi;
+        return coord.value / 72 * dpi;
     case CoordinateUnit::pc:
-        return c.value / 6 * dpi;
+        return coord.value / 6 * dpi;
     case CoordinateUnit::mm:
-        return c.value / 25.4 * dpi;
+        return coord.value / 25.4 * dpi;
     case CoordinateUnit::cm:
-        return c.value / 2.54 * dpi;
+        return coord.value / 2.54 * dpi;
     case CoordinateUnit::in:
-        return c.value * dpi;
+        return coord.value * dpi;
     case CoordinateUnit::em:
-        return c.value * fontSize;
+        return coord.value * fontSize;
     case CoordinateUnit::ex:
-        return c.value * fontSize * 0.52;
+        return coord.value * fontSize * 0.52;
     case CoordinateUnit::percent:
-        return origin + c.value / 100 * length;
+        return origin + coord.value / 100 * length;
     case CoordinateUnit::user:
     case CoordinateUnit::px:
-        return c.value;
+        return coord.value;
     }
-    return c.value;
+    return coord.value;
 }
 static double parse_opacity(std::string_view text) {
     const double value = read_number(text).value;
@@ -471,8 +478,8 @@ static Transform parse_transform(std::string_view text) {
                                                                                : 1;
         bool valid = true;
         while (pos < text.size() && text[pos] != ')') {
-            const char c = text[pos];
-            if (c == '+' || c == '-' || c == '.' || is_digit(c)) {
+            const char character = text[pos];
+            if (character == '+' || character == '-' || character == '.' || is_digit(character)) {
                 if (count == maxArgs) {
                     valid = false;
                     break;
@@ -484,7 +491,7 @@ static Transform parse_transform(std::string_view text) {
                     break;
                 }
                 args[count++] = number.value;
-            } else if (is_space(c) || c == ',')
+            } else if (is_space(character) || character == ',')
                 ++pos;
             else {
                 valid = false;
@@ -495,22 +502,22 @@ static Transform parse_transform(std::string_view text) {
         if (valid) ++pos;
         text.remove_prefix(pos);
         if (!valid) continue;
-        Transform t = identity;
+        Transform xform = identity;
         if (name == "matrix" && count == 6)
-            t = args;
+            xform = args;
         else if (name == "translate" && (count == 1 || count == 2))
-            t = translation(args[0], args[1]);
+            xform = translation(args[0], args[1]);
         else if (name == "scale" && (count == 1 || count == 2))
-            t = scaling(args[0], count == 1 ? args[0] : args[1]);
+            xform = scaling(args[0], count == 1 ? args[0] : args[1]);
         else if (name == "rotate" && (count == 1 || count == 3)) {
-            t = rotation(args[0] / 180 * pi);
+            xform = rotation(args[0] / 180 * circlePi);
             if (count == 3)
-                t = multiply(multiply(translation(-args[1], -args[2]), t), translation(args[1], args[2]));
+                xform = multiply(multiply(translation(-args[1], -args[2]), xform), translation(args[1], args[2]));
         } else if (name == "skewX" && count == 1)
-            t[2] = std::tan(args[0] / 180 * pi);
+            xform[2] = std::tan(args[0] / 180 * circlePi);
         else if (name == "skewY" && count == 1)
-            t[1] = std::tan(args[0] / 180 * pi);
-        result = multiply(t, result);
+            xform[1] = std::tan(args[0] / 180 * circlePi);
+        result = multiply(xform, result);
     }
     return result;
 }
@@ -703,7 +710,7 @@ static Color parse_color_rgb(std::string_view text) {
     std::array<Color, 3> channels{};
     auto rest = values;
     bool valid = true;
-    for (std::size_t i = 0; i < channels.size(); ++i) {
+    for (std::size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex) {
         rest = trim(rest);
         const bool negative = rest.starts_with('-');
         if (negative || rest.starts_with('+')) rest.remove_prefix(1);
@@ -711,17 +718,17 @@ static Color parse_color_rgb(std::string_view text) {
             valid = false;
             break;
         }
-        const auto [end, error] = std::from_chars(rest.data(), rest.data() + rest.size(), channels[i]);
+        const auto [end, error] = std::from_chars(rest.data(), rest.data() + rest.size(), channels[channelIndex]);
         if (error == std::errc::invalid_argument) {
             valid = false;
             break;
         }
         if (error == std::errc::result_out_of_range)
-            channels[i] = std::numeric_limits<Color>::max();
+            channels[channelIndex] = std::numeric_limits<Color>::max();
         else if (negative)
-            channels[i] = Color{0} - channels[i];
+            channels[channelIndex] = Color{0} - channels[channelIndex];
         rest.remove_prefix(static_cast<std::size_t>(end - rest.data()));
-        if (i != 2) {
+        if (channelIndex != 2) {
             if (!rest.starts_with(',')) {
                 valid = false;
                 break;
@@ -733,27 +740,27 @@ static Color parse_color_rgb(std::string_view text) {
         return rgb(std::min(channels[0], Color{255}), std::min(channels[1], Color{255}),
                    std::min(channels[2], Color{255}));
     rest = values;
-    for (std::size_t i = 0; i < channels.size(); ++i) {
+    for (std::size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex) {
         rest = trim(rest);
         if (rest.starts_with('+')) rest.remove_prefix(1);
         if (rest.empty()) return rgb(128, 128, 128);
-        std::size_t n = 0;
-        while (n < rest.size() && is_digit(rest[n]))
-            ++n;
-        if (n < rest.size() && rest[n] == '.') {
-            ++n;
-            if (n == rest.size() || !is_digit(rest[n])) return rgb(128, 128, 128);
-            while (n < rest.size() && is_digit(rest[n]))
-                ++n;
+        std::size_t length = 0;
+        while (length < rest.size() && is_digit(rest[length]))
+            ++length;
+        if (length < rest.size() && rest[length] == '.') {
+            ++length;
+            if (length == rest.size() || !is_digit(rest[length])) return rgb(128, 128, 128);
+            while (length < rest.size() && is_digit(rest[length]))
+                ++length;
         }
-        const double value = read_number(rest.substr(0, n)).value;
-        rest.remove_prefix(n);
+        const double value = read_number(rest.substr(0, length)).value;
+        rest.remove_prefix(length);
         if (!rest.starts_with('%')) return rgb(128, 128, 128);
         rest.remove_prefix(1);
         rest = trim(rest);
-        if (!rest.starts_with(i == 2 ? ')' : ',')) return rgb(128, 128, 128);
+        if (!rest.starts_with(channelIndex == 2 ? ')' : ',')) return rgb(128, 128, 128);
         rest.remove_prefix(1);
-        channels[i] = static_cast<Color>(
+        channels[channelIndex] = static_cast<Color>(
             std::round(std::isfinite(value) ? std::clamp(value, 0.0, 100.0) * 255 / 100 : 0));
     }
     return rgb(channels[0], channels[1], channels[2]);
@@ -848,23 +855,23 @@ static int get_args_per_element(char cmd) {
     return -1;
 }
 
-static double square(double x) {
-    return x * x;
+static double square(double value) {
+    return value * value;
 }
 
-static double magnitude(double x, double y) {
-    return std::hypot(x, y);
+static double magnitude(double deltaX, double deltaY) {
+    return std::hypot(deltaX, deltaY);
 }
 
-static double vector_ratio(double ux, double uy, double vx, double vy) {
-    return (ux * vx + uy * vy) / (magnitude(ux, uy) * magnitude(vx, vy));
+static double vector_ratio(double fromX, double fromY, double toX, double toY) {
+    return (fromX * toX + fromY * toY) / (magnitude(fromX, fromY) * magnitude(toX, toY));
 }
 
-static double vector_angle(double ux, double uy, double vx, double vy) {
-    double r = vector_ratio(ux, uy, vx, vy);
-    if (r < -1.0) r = -1.0;
-    if (r > 1.0) r = 1.0;
-    return ((ux * vy < uy * vx) ? -1.0 : 1.0) * acos(r);
+static double vector_angle(double fromX, double fromY, double toX, double toY) {
+    double cosine = vector_ratio(fromX, fromY, toX, toY);
+    if (cosine < -1.0) cosine = -1.0;
+    if (cosine > 1.0) cosine = 1.0;
+    return ((fromX * toY < fromY * toX) ? -1.0 : 1.0) * acos(cosine);
 }
 
 static double view_align(double content, double container, Align type) {
@@ -941,10 +948,10 @@ class Parser {
     void parse_xml();
     void parse_element(std::string_view text);
     void reset_path();
-    void add_point(double x, double y);
-    void move_to(double x, double y);
-    void line_to(double x, double y);
-    void cubic_bez_to(double cx1, double cy1, double cx2, double cy2, double x, double y);
+    void add_point(double posX, double posY);
+    void move_to(double posX, double posY);
+    void line_to(double posX, double posY);
+    void cubic_bez_to(double cx1, double cy1, double cx2, double cy2, double posX, double posY);
     void push_attr();
     void pop_attr();
     double actual_orig_x() const;
@@ -960,8 +967,8 @@ class Parser {
     bool parse_attr(std::string_view name, std::string_view value);
     void add_path(bool closed);
     void add_shape();
-    const GradientData *find_gradient_data(std::string_view id) const;
-    Paint create_gradient(std::string_view id, const Bounds &bounds, const Transform &xform,
+    const GradientData *find_gradient_data(std::string_view identifier) const;
+    Paint create_gradient(std::string_view gradientId, const Bounds &bounds, const Transform &xform,
                           double opacity) const;
     void create_gradients();
     void parse_gradient(std::span<const Attribute> attributes, GradientKind kind);
@@ -983,8 +990,8 @@ class Parser {
     void parse_circle(std::span<const Attribute> attr);
     void parse_ellipse(std::span<const Attribute> attr);
     void parse_line(std::span<const Attribute> attr);
-    void start_element(std::string_view el, std::span<const Attribute> attr);
-    void end_element(std::string_view el);
+    void start_element(std::string_view element, std::span<const Attribute> attr);
+    void end_element(std::string_view element);
     void parse_path(std::span<const Attribute> attr);
     void scale_to_viewbox(OutputUnit units);
 };
@@ -1040,30 +1047,30 @@ void Parser::parse_element(std::string_view text) {
 void Parser::reset_path() {
     points_.clear();
 }
-void Parser::add_point(double x, double y) {
+void Parser::add_point(double posX, double posY) {
     if (points_.size() == static_cast<std::size_t>(std::numeric_limits<int>::max() / 2))
         throw std::length_error("path too large");
-    points_.push_back({x, y});
+    points_.push_back({posX, posY});
 }
-void Parser::move_to(double x, double y) {
+void Parser::move_to(double posX, double posY) {
     if (points_.empty())
-        add_point(x, y);
+        add_point(posX, posY);
     else
-        points_.back() = {x, y};
+        points_.back() = {posX, posY};
 }
-void Parser::line_to(double x, double y) {
+void Parser::line_to(double posX, double posY) {
     if (points_.empty()) return;
-    const auto p = points_.back();
-    const double dx = x - p.x, dy = y - p.y;
-    add_point(p.x + dx / 3, p.y + dy / 3);
-    add_point(x - dx / 3, y - dy / 3);
-    add_point(x, y);
+    const auto start = points_.back();
+    const double deltaX = posX - start.x, deltaY = posY - start.y;
+    add_point(start.x + deltaX / 3, start.y + deltaY / 3);
+    add_point(posX - deltaX / 3, posY - deltaY / 3);
+    add_point(posX, posY);
 }
-void Parser::cubic_bez_to(double cx1, double cy1, double cx2, double cy2, double x, double y) {
+void Parser::cubic_bez_to(double cx1, double cy1, double cx2, double cy2, double posX, double posY) {
     if (points_.empty()) return;
     add_point(cx1, cy1);
     add_point(cx2, cy2);
-    add_point(x, y);
+    add_point(posX, posY);
 }
 void Parser::push_attr() {
     // Copy before growth: no reference into the vector may survive reallocation.
@@ -1117,8 +1124,8 @@ void Parser::apply_class_styles(std::string_view text) {
         text = trim(text);
         const auto end = text.find_first_of(" \t\n\v\f\r");
         const auto name = text.substr(0, end);
-        for (auto it = styles_.rbegin(); it != styles_.rend(); ++it)
-            if (it->className == name) parse_style(it->propertiesText);
+        for (auto style = styles_.rbegin(); style != styles_.rend(); ++style)
+            if (style->className == name) parse_style(style->propertiesText);
         text.remove_prefix(name.size());
     }
 }
@@ -1192,7 +1199,7 @@ bool Parser::parse_attr(std::string_view name, std::string_view value) {
     else if (name == "paint-order")
         attr.paintOrder = parse_paint_order(value);
     else if (name == "id")
-        attr.id = value;
+        attr.identifier = value;
     else if (name == "class")
         apply_class_styles(value);
     else
@@ -1212,9 +1219,9 @@ void Parser::add_path(bool closed) {
         if (!std::isfinite(point.x) || !std::isfinite(point.y)) return;
         path.points.push_back(point);
     }
-    for (std::size_t i = 0; i + 3 < path.points.size(); i += 3) {
-        const auto bounds = curve_bounds(std::span<const Point, 4>(path.points.data() + i, 4));
-        path.bounds = i == 0 ? bounds : merge_bounds(path.bounds, bounds);
+    for (std::size_t segment = 0; segment + 3 < path.points.size(); segment += 3) {
+        const auto bounds = curve_bounds(std::span<const Point, 4>(path.points.data() + segment, 4));
+        path.bounds = segment == 0 ? bounds : merge_bounds(path.bounds, bounds);
     }
     paths_.push_back(std::move(path));
 }
@@ -1222,7 +1229,7 @@ void Parser::add_shape() {
     if (paths_.empty()) return;
     const auto &attr = attributes_.back();
     Shape shape;
-    shape.id = attr.id;
+    shape.id = attr.identifier;
     shape.xform = attr.xform;
     const double scale = average_scale(attr.xform);
     shape.strokeWidth = attr.strokeWidth * scale;
@@ -1247,21 +1254,21 @@ void Parser::add_shape() {
         shape.fill = Color(*color | (static_cast<Color>(attr.fillOpacity * 255) << 24));
     if (const auto *color = std::get_if<Color>(&attr.stroke))
         shape.stroke = Color(*color | (static_cast<Color>(attr.strokeOpacity * 255) << 24));
-    if (const auto *ref = std::get_if<GradientReference>(&attr.fill)) shape.fillGradient = ref->id;
-    if (const auto *ref = std::get_if<GradientReference>(&attr.stroke)) shape.strokeGradient = ref->id;
+    if (const auto *ref = std::get_if<GradientReference>(&attr.fill)) shape.fillGradient = ref->identifier;
+    if (const auto *ref = std::get_if<GradientReference>(&attr.stroke)) shape.strokeGradient = ref->identifier;
     shape.visible = attr.display && attr.visible;
     pending_.push_back({std::move(shape), attr.fillOpacity, attr.strokeOpacity});
 }
 
-const GradientData *Parser::find_gradient_data(std::string_view id) const {
-    if (!id.empty())
-        for (auto it = gradients_.rbegin(); it != gradients_.rend(); ++it)
-            if (it->id == id) return &*it;
+const GradientData *Parser::find_gradient_data(std::string_view identifier) const {
+    if (!identifier.empty())
+        for (auto gradient = gradients_.rbegin(); gradient != gradients_.rend(); ++gradient)
+            if (gradient->identifier == identifier) return &*gradient;
     return nullptr;
 }
-Paint Parser::create_gradient(std::string_view id, const Bounds &bounds, const Transform &xform,
+Paint Parser::create_gradient(std::string_view gradientId, const Bounds &bounds, const Transform &xform,
                               double opacity) const {
-    const auto *data = find_gradient_data(id);
+    const auto *data = find_gradient_data(gradientId);
     if (!data) return {};
     const std::vector<GradientStop> *stops = nullptr;
     const auto *ref = data;
@@ -1274,30 +1281,30 @@ Paint Parser::create_gradient(std::string_view id, const Bounds &bounds, const T
     }
     if (!stops) return {};
     const bool object = data->units == GradientUnits::object;
-    const double ox = object ? bounds[0] : actual_orig_x();
-    const double oy = object ? bounds[1] : actual_orig_y();
-    const double w = object ? bounds[2] - bounds[0] : actual_width();
-    const double h = object ? bounds[3] - bounds[1] : actual_height();
-    const double length = std::hypot(w, h) / std::numbers::sqrt2;
-    const auto pixels = [object, dpi = dpi_, font = attributes_.back().fontSize](Coordinate c, double origin,
-                                                                                 double extent) {
-        return object && c.units == CoordinateUnit::user ? origin + c.value * extent
-                                                         : convert_to_pixels(c, origin, extent, dpi, font);
+    const double originX = object ? bounds[0] : actual_orig_x();
+    const double originY = object ? bounds[1] : actual_orig_y();
+    const double width = object ? bounds[2] - bounds[0] : actual_width();
+    const double height = object ? bounds[3] - bounds[1] : actual_height();
+    const double length = std::hypot(width, height) / std::numbers::sqrt2;
+    const auto pixels = [object, dpi = dpi_, font = attributes_.back().fontSize](
+                            Coordinate coord, double origin, double extent) {
+        return object && coord.units == CoordinateUnit::user ? origin + coord.value * extent
+                                                            : convert_to_pixels(coord, origin, extent, dpi, font);
     };
     Gradient gradient;
     if (const auto *line = std::get_if<LinearData>(&data->geometry)) {
-        const double x1 = pixels(line->x1, ox, w), y1 = pixels(line->y1, oy, h);
-        const double x2 = pixels(line->x2, ox, w), y2 = pixels(line->y2, oy, h);
-        gradient.xform = {y2 - y1, x1 - x2, x2 - x1, y2 - y1, x1, y1};
+        const double startX = pixels(line->startX, originX, width), startY = pixels(line->startY, originY, height);
+        const double endX = pixels(line->endX, originX, width), endY = pixels(line->endY, originY, height);
+        gradient.xform = {endY - startY, startX - endX, endX - startX, endY - startY, startX, startY};
     } else {
         const auto &radial = std::get<RadialData>(data->geometry);
-        const double cx = pixels(radial.cx, ox, w), cy = pixels(radial.cy, oy, h);
-        const double fx = pixels(radial.fx, ox, w), fy = pixels(radial.fy, oy, h);
-        const double r = pixels(radial.r, 0, length);
+        const double centerX = pixels(radial.centerX, originX, width), centerY = pixels(radial.centerY, originY, height);
+        const double focusX = pixels(radial.focusX, originX, width), focusY = pixels(radial.focusY, originY, height);
+        const double radius = pixels(radial.radius, 0, length);
         gradient.kind = GradientKind::radial;
-        gradient.xform = {r, 0, 0, r, cx, cy};
-        gradient.fx = r > 0 ? (fx - cx) / r : 0;
-        gradient.fy = r > 0 ? (fy - cy) / r : 0;
+        gradient.xform = {radius, 0, 0, radius, centerX, centerY};
+        gradient.fx = radius > 0 ? (focusX - centerX) / radius : 0;
+        gradient.fy = radius > 0 ? (focusY - centerY) / radius : 0;
     }
     gradient.xform = multiply(multiply(gradient.xform, data->xform), xform);
     gradient.spread = data->spread;
@@ -1327,7 +1334,7 @@ void Parser::parse_gradient(std::span<const Attribute> attributes, GradientKind 
     if (kind == GradientKind::radial) gradient.geometry = RadialData{};
     for (const auto &[name, value] : attributes) {
         if (name == "id")
-            gradient.id = value;
+            gradient.identifier = value;
         else if (!parse_attr(name, value)) {
             if (name == "gradientUnits")
                 gradient.units = value == "objectBoundingBox" ? GradientUnits::object : GradientUnits::user;
@@ -1344,25 +1351,25 @@ void Parser::parse_gradient(std::span<const Attribute> attributes, GradientKind 
                 gradient.ref = value.empty() ? value : value.substr(1);
             else if (auto *line = std::get_if<LinearData>(&gradient.geometry)) {
                 if (name == "x1")
-                    line->x1 = parse_coordinate_raw(value);
+                    line->startX = parse_coordinate_raw(value);
                 else if (name == "y1")
-                    line->y1 = parse_coordinate_raw(value);
+                    line->startY = parse_coordinate_raw(value);
                 else if (name == "x2")
-                    line->x2 = parse_coordinate_raw(value);
+                    line->endX = parse_coordinate_raw(value);
                 else if (name == "y2")
-                    line->y2 = parse_coordinate_raw(value);
+                    line->endY = parse_coordinate_raw(value);
             } else {
                 auto &radial = std::get<RadialData>(gradient.geometry);
                 if (name == "cx")
-                    radial.cx = parse_coordinate_raw(value);
+                    radial.centerX = parse_coordinate_raw(value);
                 else if (name == "cy")
-                    radial.cy = parse_coordinate_raw(value);
+                    radial.centerY = parse_coordinate_raw(value);
                 else if (name == "r")
-                    radial.r = parse_coordinate_raw(value);
+                    radial.radius = parse_coordinate_raw(value);
                 else if (name == "fx")
-                    radial.fx = parse_coordinate_raw(value);
+                    radial.focusX = parse_coordinate_raw(value);
                 else if (name == "fy")
-                    radial.fy = parse_coordinate_raw(value);
+                    radial.focusY = parse_coordinate_raw(value);
             }
         }
     }
@@ -1520,161 +1527,161 @@ void Parser::path_v_line_to(std::span<const double, 1> args, bool rel) {
 }
 
 void Parser::path_cubic_bez_to(std::span<const double, 6> args, bool rel) {
-    double x2, y2, cx1, cy1, cx2, cy2;
+    double endX, endY, cx1, cy1, cx2, cy2;
 
     if (rel) {
         cx1 = cursor_.point.x + args[0];
         cy1 = cursor_.point.y + args[1];
         cx2 = cursor_.point.x + args[2];
         cy2 = cursor_.point.y + args[3];
-        x2 = cursor_.point.x + args[4];
-        y2 = cursor_.point.y + args[5];
+        endX = cursor_.point.x + args[4];
+        endY = cursor_.point.y + args[5];
     } else {
         cx1 = args[0];
         cy1 = args[1];
         cx2 = args[2];
         cy2 = args[3];
-        x2 = args[4];
-        y2 = args[5];
+        endX = args[4];
+        endY = args[5];
     }
 
-    cubic_bez_to(cx1, cy1, cx2, cy2, x2, y2);
+    cubic_bez_to(cx1, cy1, cx2, cy2, endX, endY);
 
     cursor_.control.x = cx2;
     cursor_.control.y = cy2;
-    cursor_.point.x = x2;
-    cursor_.point.y = y2;
+    cursor_.point.x = endX;
+    cursor_.point.y = endY;
 }
 
 void Parser::path_cubic_bez_short_to(std::span<const double, 4> args, bool rel) {
-    double x1, y1, x2, y2, cx1, cy1, cx2, cy2;
+    double startX, startY, endX, endY, cx1, cy1, cx2, cy2;
 
-    x1 = cursor_.point.x;
-    y1 = cursor_.point.y;
+    startX = cursor_.point.x;
+    startY = cursor_.point.y;
     if (rel) {
         cx2 = cursor_.point.x + args[0];
         cy2 = cursor_.point.y + args[1];
-        x2 = cursor_.point.x + args[2];
-        y2 = cursor_.point.y + args[3];
+        endX = cursor_.point.x + args[2];
+        endY = cursor_.point.y + args[3];
     } else {
         cx2 = args[0];
         cy2 = args[1];
-        x2 = args[2];
-        y2 = args[3];
+        endX = args[2];
+        endY = args[3];
     }
 
-    cx1 = 2 * x1 - cursor_.control.x;
-    cy1 = 2 * y1 - cursor_.control.y;
+    cx1 = 2 * startX - cursor_.control.x;
+    cy1 = 2 * startY - cursor_.control.y;
 
-    cubic_bez_to(cx1, cy1, cx2, cy2, x2, y2);
+    cubic_bez_to(cx1, cy1, cx2, cy2, endX, endY);
 
     cursor_.control.x = cx2;
     cursor_.control.y = cy2;
-    cursor_.point.x = x2;
-    cursor_.point.y = y2;
+    cursor_.point.x = endX;
+    cursor_.point.y = endY;
 }
 
 void Parser::path_quad_bez_to(std::span<const double, 4> args, bool rel) {
-    double x1, y1, x2, y2, cx, cy;
+    double startX, startY, endX, endY, controlX, controlY;
     double cx1, cy1, cx2, cy2;
 
-    x1 = cursor_.point.x;
-    y1 = cursor_.point.y;
+    startX = cursor_.point.x;
+    startY = cursor_.point.y;
     if (rel) {
-        cx = cursor_.point.x + args[0];
-        cy = cursor_.point.y + args[1];
-        x2 = cursor_.point.x + args[2];
-        y2 = cursor_.point.y + args[3];
+        controlX = cursor_.point.x + args[0];
+        controlY = cursor_.point.y + args[1];
+        endX = cursor_.point.x + args[2];
+        endY = cursor_.point.y + args[3];
     } else {
-        cx = args[0];
-        cy = args[1];
-        x2 = args[2];
-        y2 = args[3];
+        controlX = args[0];
+        controlY = args[1];
+        endX = args[2];
+        endY = args[3];
     }
 
     // Convert to cubic bezier
-    cx1 = x1 + 2.0 / 3.0 * (cx - x1);
-    cy1 = y1 + 2.0 / 3.0 * (cy - y1);
-    cx2 = x2 + 2.0 / 3.0 * (cx - x2);
-    cy2 = y2 + 2.0 / 3.0 * (cy - y2);
+    cx1 = startX + 2.0 / 3.0 * (controlX - startX);
+    cy1 = startY + 2.0 / 3.0 * (controlY - startY);
+    cx2 = endX + 2.0 / 3.0 * (controlX - endX);
+    cy2 = endY + 2.0 / 3.0 * (controlY - endY);
 
-    cubic_bez_to(cx1, cy1, cx2, cy2, x2, y2);
+    cubic_bez_to(cx1, cy1, cx2, cy2, endX, endY);
 
-    cursor_.control.x = cx;
-    cursor_.control.y = cy;
-    cursor_.point.x = x2;
-    cursor_.point.y = y2;
+    cursor_.control.x = controlX;
+    cursor_.control.y = controlY;
+    cursor_.point.x = endX;
+    cursor_.point.y = endY;
 }
 
 void Parser::path_quad_bez_short_to(std::span<const double, 2> args, bool rel) {
-    double x1, y1, x2, y2, cx, cy;
+    double startX, startY, endX, endY, controlX, controlY;
     double cx1, cy1, cx2, cy2;
 
-    x1 = cursor_.point.x;
-    y1 = cursor_.point.y;
+    startX = cursor_.point.x;
+    startY = cursor_.point.y;
     if (rel) {
-        x2 = cursor_.point.x + args[0];
-        y2 = cursor_.point.y + args[1];
+        endX = cursor_.point.x + args[0];
+        endY = cursor_.point.y + args[1];
     } else {
-        x2 = args[0];
-        y2 = args[1];
+        endX = args[0];
+        endY = args[1];
     }
 
-    cx = 2 * x1 - cursor_.control.x;
-    cy = 2 * y1 - cursor_.control.y;
+    controlX = 2 * startX - cursor_.control.x;
+    controlY = 2 * startY - cursor_.control.y;
 
     // Convert to cubix bezier
-    cx1 = x1 + 2.0 / 3.0 * (cx - x1);
-    cy1 = y1 + 2.0 / 3.0 * (cy - y1);
-    cx2 = x2 + 2.0 / 3.0 * (cx - x2);
-    cy2 = y2 + 2.0 / 3.0 * (cy - y2);
+    cx1 = startX + 2.0 / 3.0 * (controlX - startX);
+    cy1 = startY + 2.0 / 3.0 * (controlY - startY);
+    cx2 = endX + 2.0 / 3.0 * (controlX - endX);
+    cy2 = endY + 2.0 / 3.0 * (controlY - endY);
 
-    cubic_bez_to(cx1, cy1, cx2, cy2, x2, y2);
+    cubic_bez_to(cx1, cy1, cx2, cy2, endX, endY);
 
-    cursor_.control.x = cx;
-    cursor_.control.y = cy;
-    cursor_.point.x = x2;
-    cursor_.point.y = y2;
+    cursor_.control.x = controlX;
+    cursor_.control.y = controlY;
+    cursor_.point.x = endX;
+    cursor_.point.y = endY;
 }
 
 void Parser::path_arc_to(std::span<const double, 7> args, bool rel) {
     // Ported from canvg (https://code.google.com/p/canvg/)
-    double rx, ry, rotx;
-    double x1, y1, x2, y2, cx, cy, dx, dy, d;
-    double x1p, y1p, cxp, cyp, s, sa, sb;
-    double ux, uy, vx, vy, a1, da;
-    double x, y, tanx, tany, a, px = 0, py = 0, ptanx = 0, ptany = 0;
-    Transform t;
+    double radiusX, radiusY, rotx;
+    double startX, startY, endX, endY, centerX, centerY, deltaX, deltaY, metric;
+    double x1p, y1p, cxp, cyp, centerScale, numerator, denominator;
+    double fromX, fromY, toX, toY, startAngle, sweepAngle;
+    double posX, posY, tanx, tany, angle, prevX = 0, prevY = 0, ptanx = 0, ptany = 0;
+    Transform xform;
     double sinrx, cosrx;
-    int fa, fs;
-    int i, ndivs;
+    int largeArc, sweep;
+    int segment, ndivs;
     double hda, kappa;
 
-    rx = fabs(args[0]);                // y radius
-    ry = fabs(args[1]);                // x radius
-    rotx = args[2] / 180.0 * pi;       // x rotation angle
-    fa = fabs(args[3]) > 1e-6 ? 1 : 0; // Large arc
-    fs = fabs(args[4]) > 1e-6 ? 1 : 0; // Sweep direction
-    x1 = cursor_.point.x;              // start point
-    y1 = cursor_.point.y;
+    radiusX = fabs(args[0]);                // x radius
+    radiusY = fabs(args[1]);                // y radius
+    rotx = args[2] / 180.0 * circlePi;       // x rotation angle
+    largeArc = fabs(args[3]) > 1e-6 ? 1 : 0; // Large arc
+    sweep = fabs(args[4]) > 1e-6 ? 1 : 0; // Sweep direction
+    startX = cursor_.point.x;              // start point
+    startY = cursor_.point.y;
     if (rel) { // end point
-        x2 = cursor_.point.x + args[5];
-        y2 = cursor_.point.y + args[6];
+        endX = cursor_.point.x + args[5];
+        endY = cursor_.point.y + args[6];
     } else {
-        x2 = args[5];
-        y2 = args[6];
+        endX = args[5];
+        endY = args[6];
     }
-    if (!isfinite(x2) || !isfinite(y2)) return;
+    if (!isfinite(endX) || !isfinite(endY)) return;
 
-    dx = x1 - x2;
-    dy = y1 - y2;
-    d = std::hypot(dx, dy);
-    if (d < 1e-6 || rx < 1e-6 || ry < 1e-6 || !isfinite(d) || !isfinite(rx) || !isfinite(ry) ||
+    deltaX = startX - endX;
+    deltaY = startY - endY;
+    metric = std::hypot(deltaX, deltaY);
+    if (metric < 1e-6 || radiusX < 1e-6 || radiusY < 1e-6 || !isfinite(metric) || !isfinite(radiusX) || !isfinite(radiusY) ||
         !isfinite(rotx)) {
         // The arc degenerates to a line
-        line_to(x2, y2);
-        cursor_.point.x = x2;
-        cursor_.point.y = y2;
+        line_to(endX, endY);
+        cursor_.point.x = endX;
+        cursor_.point.y = endY;
         return;
     }
 
@@ -1684,144 +1691,147 @@ void Parser::path_arc_to(std::span<const double, 7> args, bool rel) {
     // Convert to center point parameterization.
     // http://www.w3.org/TR/SVG11/implnote.html#ArcImplementationNotes
     // 1) Compute x1', y1'
-    x1p = cosrx * dx / 2.0 + sinrx * dy / 2.0;
-    y1p = -sinrx * dx / 2.0 + cosrx * dy / 2.0;
-    d = square(x1p) / square(rx) + square(y1p) / square(ry);
-    if (d > 1) {
-        d = sqrt(d);
-        rx *= d;
-        ry *= d;
+    x1p = cosrx * deltaX / 2.0 + sinrx * deltaY / 2.0;
+    y1p = -sinrx * deltaX / 2.0 + cosrx * deltaY / 2.0;
+    metric = square(x1p) / square(radiusX) + square(y1p) / square(radiusY);
+    if (metric > 1) {
+        metric = sqrt(metric);
+        radiusX *= metric;
+        radiusY *= metric;
     }
     // 2) Compute cx', cy'
-    s = 0.0;
-    sa = square(rx) * square(ry) - square(rx) * square(y1p) - square(ry) * square(x1p);
-    sb = square(rx) * square(y1p) + square(ry) * square(x1p);
-    if (sa < 0.0) sa = 0.0;
-    if (sb > 0.0) s = sqrt(sa / sb);
-    if (fa == fs) s = -s;
-    cxp = s * rx * y1p / ry;
-    cyp = s * -ry * x1p / rx;
+    centerScale = 0.0;
+    numerator = square(radiusX) * square(radiusY) - square(radiusX) * square(y1p) - square(radiusY) * square(x1p);
+    denominator = square(radiusX) * square(y1p) + square(radiusY) * square(x1p);
+    if (numerator < 0.0) numerator = 0.0;
+    if (denominator > 0.0) centerScale = sqrt(numerator / denominator);
+    if (largeArc == sweep) centerScale = -centerScale;
+    cxp = centerScale * radiusX * y1p / radiusY;
+    cyp = centerScale * -radiusY * x1p / radiusX;
 
-    // 3) Compute cx,cy from cx',cy'
-    cx = (x1 + x2) / 2.0 + cosrx * cxp - sinrx * cyp;
-    cy = (y1 + y2) / 2.0 + sinrx * cxp + cosrx * cyp;
+    // 3) Compute centerX,centerY from cx',cy'
+    centerX = (startX + endX) / 2.0 + cosrx * cxp - sinrx * cyp;
+    centerY = (startY + endY) / 2.0 + sinrx * cxp + cosrx * cyp;
 
     // 4) Calculate theta1, and delta theta.
-    ux = (x1p - cxp) / rx;
-    uy = (y1p - cyp) / ry;
-    vx = (-x1p - cxp) / rx;
-    vy = (-y1p - cyp) / ry;
-    a1 = vector_angle(1.0, 0.0, ux, uy); // Initial angle
-    da = vector_angle(ux, uy, vx, vy);   // Delta angle
+    fromX = (x1p - cxp) / radiusX;
+    fromY = (y1p - cyp) / radiusY;
+    toX = (-x1p - cxp) / radiusX;
+    toY = (-y1p - cyp) / radiusY;
+    startAngle = vector_angle(1.0, 0.0, fromX, fromY); // Initial angle
+    sweepAngle = vector_angle(fromX, fromY, toX, toY);   // Delta angle
 
-    //	if (vecrat(ux,uy,vx,vy) <= -1.0) da = pi;
-    //	if (vecrat(ux,uy,vx,vy) >= 1.0) da = 0;
+    //	if (vecrat(fromX,fromY,toX,toY) <= -1.0) sweepAngle = circlePi;
+    //	if (vecrat(fromX,fromY,toX,toY) >= 1.0) sweepAngle = 0;
 
-    if (fs == 0 && da > 0)
-        da -= 2 * pi;
-    else if (fs == 1 && da < 0)
-        da += 2 * pi;
+    if (sweep == 0 && sweepAngle > 0)
+        sweepAngle -= 2 * circlePi;
+    else if (sweep == 1 && sweepAngle < 0)
+        sweepAngle += 2 * circlePi;
 
     // Invalid geometry cannot reach the subdivision cast. Tiny swept angles
     // lose precision in (1-cos(hda))/sin(hda); approximate them with a line.
-    if (!isfinite(da) || !isfinite(a1) || !isfinite(cx) || !isfinite(cy) || fabs(da) < 2e-3) {
-        line_to(x2, y2);
-        cursor_.point.x = x2;
-        cursor_.point.y = y2;
+    if (!isfinite(sweepAngle) || !isfinite(startAngle) || !isfinite(centerX) || !isfinite(centerY) || fabs(sweepAngle) < 2e-3) {
+        line_to(endX, endY);
+        cursor_.point.x = endX;
+        cursor_.point.y = endY;
         return;
     }
 
     // Approximate the arc using cubic spline segments.
-    t[0] = cosrx;
-    t[1] = sinrx;
-    t[2] = -sinrx;
-    t[3] = cosrx;
-    t[4] = cx;
-    t[5] = cy;
+    xform[0] = cosrx;
+    xform[1] = sinrx;
+    xform[2] = -sinrx;
+    xform[3] = cosrx;
+    xform[4] = centerX;
+    xform[5] = centerY;
 
     // Split arc into max 90 degree segments.
     // The loop assumes an iteration per end point (including start and end), this +1.
-    ndivs = static_cast<int>(fabs(da) / (pi * 0.5) + 1.0);
-    hda = (da / static_cast<double>(ndivs)) / 2.0;
+    ndivs = static_cast<int>(fabs(sweepAngle) / (circlePi * 0.5) + 1.0);
+    hda = (sweepAngle / static_cast<double>(ndivs)) / 2.0;
     kappa = fabs(4.0 / 3.0 * (1.0 - cos(hda)) / sin(hda));
-    if (da < 0.0) kappa = -kappa;
+    if (sweepAngle < 0.0) kappa = -kappa;
 
-    for (i = 0; i <= ndivs; i++) {
-        a = a1 + da * (static_cast<double>(i) / static_cast<double>(ndivs));
-        dx = cos(a);
-        dy = sin(a);
-        const auto position = transform_point({dx * rx, dy * ry}, t);
-        x = position.x;
-        y = position.y; // position
-        const auto tangent = transform_vector({-dy * rx * kappa, dx * ry * kappa}, t);
+    for (segment = 0; segment <= ndivs; segment++) {
+        angle = startAngle + sweepAngle * (static_cast<double>(segment) / static_cast<double>(ndivs));
+        deltaX = cos(angle);
+        deltaY = sin(angle);
+        const auto position = transform_point({deltaX * radiusX, deltaY * radiusY}, xform);
+        posX = position.x;
+        posY = position.y; // position
+        const auto tangent = transform_vector({-deltaY * radiusX * kappa, deltaX * radiusY * kappa}, xform);
         tanx = tangent.x;
         tany = tangent.y; // tangent
         // Keep exact endpoints when reconstructing them loses precision.
-        if (i == 0) {
-            x = x1;
-            y = y1;
+        if (segment == 0) {
+            posX = startX;
+            posY = startY;
         }
-        if (i == ndivs) {
-            x = x2;
-            y = y2;
+        if (segment == ndivs) {
+            posX = endX;
+            posY = endY;
         }
-        if (i > 0) cubic_bez_to(px + ptanx, py + ptany, x - tanx, y - tany, x, y);
-        px = x;
-        py = y;
+        if (segment > 0) cubic_bez_to(prevX + ptanx, prevY + ptany, posX - tanx, posY - tany, posX, posY);
+        prevX = posX;
+        prevY = posY;
         ptanx = tanx;
         ptany = tany;
     }
 
-    cursor_.point.x = x2;
-    cursor_.point.y = y2;
+    cursor_.point.x = endX;
+    cursor_.point.y = endY;
 }
 
 void Parser::parse_rect(std::span<const Attribute> attr) {
-    double x = 0.0;
-    double y = 0.0;
-    double w = 0.0;
-    double h = 0.0;
-    double rx = -1.0; // marks not set
-    double ry = -1.0;
+    double posX = 0.0;
+    double posY = 0.0;
+    double width = 0.0;
+    double height = 0.0;
+    double radiusX = -1.0; // marks not set
+    double radiusY = -1.0;
 
     for (const auto &[name, value] : attr) {
         if (!parse_attr(name, value)) {
-            if (name == "x") x = parse_coordinate(value, actual_orig_x(), actual_width());
-            if (name == "y") y = parse_coordinate(value, actual_orig_y(), actual_height());
-            if (name == "width") w = parse_coordinate(value, 0.0, actual_width());
-            if (name == "height") h = parse_coordinate(value, 0.0, actual_height());
-            if (name == "rx") rx = fabs(parse_coordinate(value, 0.0, actual_width()));
-            if (name == "ry") ry = fabs(parse_coordinate(value, 0.0, actual_height()));
+            if (name == "x") posX = parse_coordinate(value, actual_orig_x(), actual_width());
+            if (name == "y") posY = parse_coordinate(value, actual_orig_y(), actual_height());
+            if (name == "width") width = parse_coordinate(value, 0.0, actual_width());
+            if (name == "height") height = parse_coordinate(value, 0.0, actual_height());
+            if (name == "rx") radiusX = fabs(parse_coordinate(value, 0.0, actual_width()));
+            if (name == "ry") radiusY = fabs(parse_coordinate(value, 0.0, actual_height()));
         }
     }
 
-    if (rx < 0.0 && ry > 0.0) rx = ry;
-    if (ry < 0.0 && rx > 0.0) ry = rx;
-    if (rx < 0.0) rx = 0.0;
-    if (ry < 0.0) ry = 0.0;
-    if (rx > w / 2.0) rx = w / 2.0;
-    if (ry > h / 2.0) ry = h / 2.0;
+    if (radiusX < 0.0 && radiusY > 0.0) radiusX = radiusY;
+    if (radiusY < 0.0 && radiusX > 0.0) radiusY = radiusX;
+    if (radiusX < 0.0) radiusX = 0.0;
+    if (radiusY < 0.0) radiusY = 0.0;
+    if (radiusX > width / 2.0) radiusX = width / 2.0;
+    if (radiusY > height / 2.0) radiusY = height / 2.0;
 
-    if (w != 0.0 && h != 0.0) {
+    if (width != 0.0 && height != 0.0) {
         reset_path();
 
-        if (rx < 0.00001 || ry < 0.0001) {
-            move_to(x, y);
-            line_to(x + w, y);
-            line_to(x + w, y + h);
-            line_to(x, y + h);
+        if (radiusX < 0.00001 || radiusY < 0.0001) {
+            move_to(posX, posY);
+            line_to(posX + width, posY);
+            line_to(posX + width, posY + height);
+            line_to(posX, posY + height);
         } else {
             // Rounded rectangle
-            move_to(x + rx, y);
-            line_to(x + w - rx, y);
-            cubic_bez_to(x + w - rx * (1 - kappa90), y, x + w, y + ry * (1 - kappa90), x + w, y + ry);
-            line_to(x + w, y + h - ry);
-            cubic_bez_to(x + w, y + h - ry * (1 - kappa90), x + w - rx * (1 - kappa90), y + h, x + w - rx,
-                         y + h);
-            line_to(x + rx, y + h);
-            cubic_bez_to(x + rx * (1 - kappa90), y + h, x, y + h - ry * (1 - kappa90), x, y + h - ry);
-            line_to(x, y + ry);
-            cubic_bez_to(x, y + ry * (1 - kappa90), x + rx * (1 - kappa90), y, x + rx, y);
+            move_to(posX + radiusX, posY);
+            line_to(posX + width - radiusX, posY);
+            cubic_bez_to(posX + width - radiusX * (1 - kappa90), posY,
+                         posX + width, posY + radiusY * (1 - kappa90), posX + width, posY + radiusY);
+            line_to(posX + width, posY + height - radiusY);
+            cubic_bez_to(posX + width, posY + height - radiusY * (1 - kappa90),
+                         posX + width - radiusX * (1 - kappa90), posY + height,
+                         posX + width - radiusX, posY + height);
+            line_to(posX + radiusX, posY + height);
+            cubic_bez_to(posX + radiusX * (1 - kappa90), posY + height,
+                         posX, posY + height - radiusY * (1 - kappa90), posX, posY + height - radiusY);
+            line_to(posX, posY + radiusY);
+            cubic_bez_to(posX, posY + radiusY * (1 - kappa90), posX + radiusX * (1 - kappa90), posY, posX + radiusX, posY);
         }
 
         add_path(1);
@@ -1831,26 +1841,30 @@ void Parser::parse_rect(std::span<const Attribute> attr) {
 }
 
 void Parser::parse_circle(std::span<const Attribute> attr) {
-    double cx = 0.0;
-    double cy = 0.0;
-    double r = 0.0;
+    double centerX = 0.0;
+    double centerY = 0.0;
+    double radius = 0.0;
 
     for (const auto &[name, value] : attr) {
         if (!parse_attr(name, value)) {
-            if (name == "cx") cx = parse_coordinate(value, actual_orig_x(), actual_width());
-            if (name == "cy") cy = parse_coordinate(value, actual_orig_y(), actual_height());
-            if (name == "r") r = fabs(parse_coordinate(value, 0.0, actual_length()));
+            if (name == "cx") centerX = parse_coordinate(value, actual_orig_x(), actual_width());
+            if (name == "cy") centerY = parse_coordinate(value, actual_orig_y(), actual_height());
+            if (name == "r") radius = fabs(parse_coordinate(value, 0.0, actual_length()));
         }
     }
 
-    if (r > 0.0) {
+    if (radius > 0.0) {
         reset_path();
 
-        move_to(cx + r, cy);
-        cubic_bez_to(cx + r, cy + r * kappa90, cx + r * kappa90, cy + r, cx, cy + r);
-        cubic_bez_to(cx - r * kappa90, cy + r, cx - r, cy + r * kappa90, cx - r, cy);
-        cubic_bez_to(cx - r, cy - r * kappa90, cx - r * kappa90, cy - r, cx, cy - r);
-        cubic_bez_to(cx + r * kappa90, cy - r, cx + r, cy - r * kappa90, cx + r, cy);
+        move_to(centerX + radius, centerY);
+        cubic_bez_to(centerX + radius, centerY + radius * kappa90, centerX + radius * kappa90,
+            centerY + radius, centerX, centerY + radius);
+        cubic_bez_to(centerX - radius * kappa90, centerY + radius, centerX - radius,
+            centerY + radius * kappa90, centerX - radius, centerY);
+        cubic_bez_to(centerX - radius, centerY - radius * kappa90, centerX - radius * kappa90,
+            centerY - radius, centerX, centerY - radius);
+        cubic_bez_to(centerX + radius * kappa90, centerY - radius, centerX + radius,
+            centerY - radius * kappa90, centerX + radius, centerY);
 
         add_path(1);
 
@@ -1859,29 +1873,33 @@ void Parser::parse_circle(std::span<const Attribute> attr) {
 }
 
 void Parser::parse_ellipse(std::span<const Attribute> attr) {
-    double cx = 0.0;
-    double cy = 0.0;
-    double rx = 0.0;
-    double ry = 0.0;
+    double centerX = 0.0;
+    double centerY = 0.0;
+    double radiusX = 0.0;
+    double radiusY = 0.0;
 
     for (const auto &[name, value] : attr) {
         if (!parse_attr(name, value)) {
-            if (name == "cx") cx = parse_coordinate(value, actual_orig_x(), actual_width());
-            if (name == "cy") cy = parse_coordinate(value, actual_orig_y(), actual_height());
-            if (name == "rx") rx = fabs(parse_coordinate(value, 0.0, actual_width()));
-            if (name == "ry") ry = fabs(parse_coordinate(value, 0.0, actual_height()));
+            if (name == "cx") centerX = parse_coordinate(value, actual_orig_x(), actual_width());
+            if (name == "cy") centerY = parse_coordinate(value, actual_orig_y(), actual_height());
+            if (name == "rx") radiusX = fabs(parse_coordinate(value, 0.0, actual_width()));
+            if (name == "ry") radiusY = fabs(parse_coordinate(value, 0.0, actual_height()));
         }
     }
 
-    if (rx > 0.0 && ry > 0.0) {
+    if (radiusX > 0.0 && radiusY > 0.0) {
 
         reset_path();
 
-        move_to(cx + rx, cy);
-        cubic_bez_to(cx + rx, cy + ry * kappa90, cx + rx * kappa90, cy + ry, cx, cy + ry);
-        cubic_bez_to(cx - rx * kappa90, cy + ry, cx - rx, cy + ry * kappa90, cx - rx, cy);
-        cubic_bez_to(cx - rx, cy - ry * kappa90, cx - rx * kappa90, cy - ry, cx, cy - ry);
-        cubic_bez_to(cx + rx * kappa90, cy - ry, cx + rx, cy - ry * kappa90, cx + rx, cy);
+        move_to(centerX + radiusX, centerY);
+        cubic_bez_to(centerX + radiusX, centerY + radiusY * kappa90, centerX + radiusX * kappa90,
+            centerY + radiusY, centerX, centerY + radiusY);
+        cubic_bez_to(centerX - radiusX * kappa90, centerY + radiusY, centerX - radiusX,
+            centerY + radiusY * kappa90, centerX - radiusX, centerY);
+        cubic_bez_to(centerX - radiusX, centerY - radiusY * kappa90, centerX - radiusX * kappa90,
+            centerY - radiusY, centerX, centerY - radiusY);
+        cubic_bez_to(centerX + radiusX * kappa90, centerY - radiusY, centerX + radiusX,
+            centerY - radiusY * kappa90, centerX + radiusX, centerY);
 
         add_path(1);
 
@@ -1890,105 +1908,105 @@ void Parser::parse_ellipse(std::span<const Attribute> attr) {
 }
 
 void Parser::parse_line(std::span<const Attribute> attr) {
-    double x1 = 0.0;
-    double y1 = 0.0;
-    double x2 = 0.0;
-    double y2 = 0.0;
+    double startX = 0.0;
+    double startY = 0.0;
+    double endX = 0.0;
+    double endY = 0.0;
 
     for (const auto &[name, value] : attr) {
         if (!parse_attr(name, value)) {
-            if (name == "x1") x1 = parse_coordinate(value, actual_orig_x(), actual_width());
-            if (name == "y1") y1 = parse_coordinate(value, actual_orig_y(), actual_height());
-            if (name == "x2") x2 = parse_coordinate(value, actual_orig_x(), actual_width());
-            if (name == "y2") y2 = parse_coordinate(value, actual_orig_y(), actual_height());
+            if (name == "x1") startX = parse_coordinate(value, actual_orig_x(), actual_width());
+            if (name == "y1") startY = parse_coordinate(value, actual_orig_y(), actual_height());
+            if (name == "x2") endX = parse_coordinate(value, actual_orig_x(), actual_width());
+            if (name == "y2") endY = parse_coordinate(value, actual_orig_y(), actual_height());
         }
     }
 
     reset_path();
 
-    move_to(x1, y1);
-    line_to(x2, y2);
+    move_to(startX, startY);
+    line_to(endX, endY);
 
     add_path(0);
 
     add_shape();
 }
 
-void Parser::start_element(std::string_view el, std::span<const Attribute> attr) {
+void Parser::start_element(std::string_view element, std::span<const Attribute> attr) {
 
     if (defsFlag_) {
         // Skip everything but gradients and styles in defs
-        if (el == "linearGradient") {
+        if (element == "linearGradient") {
             parse_gradient(attr, GradientKind::linear);
-        } else if (el == "radialGradient") {
+        } else if (element == "radialGradient") {
             parse_gradient(attr, GradientKind::radial);
-        } else if (el == "stop") {
+        } else if (element == "stop") {
             parse_gradient_stop(attr);
-        } else if (el == "style") {
+        } else if (element == "style") {
             styleFlag_ = true;
         }
         return;
     }
 
-    if (el == "g") {
+    if (element == "g") {
         push_attr();
         parse_attribs(attr);
-    } else if (el == "path") {
+    } else if (element == "path") {
         push_attr();
         parse_path(attr);
         pop_attr();
-    } else if (el == "rect") {
+    } else if (element == "rect") {
         push_attr();
         parse_rect(attr);
         pop_attr();
-    } else if (el == "circle") {
+    } else if (element == "circle") {
         push_attr();
         parse_circle(attr);
         pop_attr();
-    } else if (el == "ellipse") {
+    } else if (element == "ellipse") {
         push_attr();
         parse_ellipse(attr);
         pop_attr();
-    } else if (el == "line") {
+    } else if (element == "line") {
         push_attr();
         parse_line(attr);
         pop_attr();
-    } else if (el == "polyline") {
+    } else if (element == "polyline") {
         push_attr();
         parse_poly(attr, 0);
         pop_attr();
-    } else if (el == "polygon") {
+    } else if (element == "polygon") {
         push_attr();
         parse_poly(attr, 1);
         pop_attr();
-    } else if (el == "linearGradient") {
+    } else if (element == "linearGradient") {
         parse_gradient(attr, GradientKind::linear);
-    } else if (el == "radialGradient") {
+    } else if (element == "radialGradient") {
         parse_gradient(attr, GradientKind::radial);
-    } else if (el == "stop") {
+    } else if (element == "stop") {
         parse_gradient_stop(attr);
-    } else if (el == "defs") {
+    } else if (element == "defs") {
         defsFlag_ = true;
-    } else if (el == "svg") {
+    } else if (element == "svg") {
         parse_svg(attr);
-    } else if (el == "style") {
+    } else if (element == "style") {
         styleFlag_ = true;
     }
 }
 
-void Parser::end_element(std::string_view el) {
+void Parser::end_element(std::string_view element) {
 
-    if (el == "g") {
+    if (element == "g") {
         pop_attr();
-    } else if (el == "defs") {
+    } else if (element == "defs") {
         defsFlag_ = false;
-    } else if (el == "style") {
+    } else if (element == "style") {
         styleFlag_ = false;
     }
 }
 
 void Parser::parse_path(std::span<const Attribute> attr) {
-    std::string_view s;
+    std::string_view pathData;
     char cmd = '\0';
     std::array<double, 10> args{};
     int nargs;
@@ -1998,13 +2016,13 @@ void Parser::parse_path(std::span<const Attribute> attr) {
 
     for (const auto &[name, value] : attr) {
         if (name == "d") {
-            s = value;
+            pathData = value;
         } else {
             parse_attr(name, value);
         }
     }
 
-    if (!s.empty()) {
+    if (!pathData.empty()) {
         reset_path();
         cursor_.point.x = 0;
         cursor_.point.y = 0;
@@ -2014,9 +2032,9 @@ void Parser::parse_path(std::span<const Attribute> attr) {
         closedFlag = false;
         nargs = 0;
 
-        while (!s.empty()) {
-            const auto token = next_path_item(s, (cmd == 'A' || cmd == 'a') && (nargs == 3 || nargs == 4));
-            s.remove_prefix(token.consumed);
+        while (!pathData.empty()) {
+            const auto token = next_path_item(pathData, (cmd == 'A' || cmd == 'a') && (nargs == 3 || nargs == 4));
+            pathData.remove_prefix(token.consumed);
             const auto item = token.text;
             if (item.empty()) break;
             if (cmd != '\0' && is_coordinate(item)) {
@@ -2131,8 +2149,8 @@ void Parser::parse_path(std::span<const Attribute> attr) {
 }
 
 void Parser::scale_to_viewbox(OutputUnit units) {
-    double tx, ty, sx, sy, us, avgs;
-    int i;
+    double offsetX, offsetY, scaleX, scaleY, unitScale, avgs;
+    int dashIndex;
 
     // Guess image size if not set completely.
     const auto bounds = image_bounds();
@@ -2156,61 +2174,61 @@ void Parser::scale_to_viewbox(OutputUnit units) {
     if (image_->width == 0) image_->width = viewWidth_;
     if (image_->height == 0) image_->height = viewHeight_;
 
-    tx = -viewMinx_;
-    ty = -viewMiny_;
-    sx = viewWidth_ > 0 ? image_->width / viewWidth_ : 0;
-    sy = viewHeight_ > 0 ? image_->height / viewHeight_ : 0;
+    offsetX = -viewMinx_;
+    offsetY = -viewMiny_;
+    scaleX = viewWidth_ > 0 ? image_->width / viewWidth_ : 0;
+    scaleY = viewHeight_ > 0 ? image_->height / viewHeight_ : 0;
     // Unit scaling
-    us = 1.0 / output_unit_pixels(units, dpi_);
+    unitScale = 1.0 / output_unit_pixels(units, dpi_);
 
     // Fix aspect ratio
-    if (sx > 0 && sy > 0 && alignType_ == Aspect::meet) {
+    if (scaleX > 0 && scaleY > 0 && alignType_ == Aspect::meet) {
         // fit whole image into viewbox
-        sx = sy = min_value(sx, sy);
-        tx += view_align(viewWidth_ * sx, image_->width, alignX_) / sx;
-        ty += view_align(viewHeight_ * sy, image_->height, alignY_) / sy;
-    } else if (sx > 0 && sy > 0 && alignType_ == Aspect::slice) {
+        scaleX = scaleY = min_value(scaleX, scaleY);
+        offsetX += view_align(viewWidth_ * scaleX, image_->width, alignX_) / scaleX;
+        offsetY += view_align(viewHeight_ * scaleY, image_->height, alignY_) / scaleY;
+    } else if (scaleX > 0 && scaleY > 0 && alignType_ == Aspect::slice) {
         // fill whole viewbox with image
-        sx = sy = max_value(sx, sy);
-        tx += view_align(viewWidth_ * sx, image_->width, alignX_) / sx;
-        ty += view_align(viewHeight_ * sy, image_->height, alignY_) / sy;
+        scaleX = scaleY = max_value(scaleX, scaleY);
+        offsetX += view_align(viewWidth_ * scaleX, image_->width, alignX_) / scaleX;
+        offsetY += view_align(viewHeight_ * scaleY, image_->height, alignY_) / scaleY;
     }
 
     // Transform
-    sx *= us;
-    sy *= us;
-    avgs = std::midpoint(sx, sy);
+    scaleX *= unitScale;
+    scaleY *= unitScale;
+    avgs = std::midpoint(scaleX, scaleY);
     for (auto &shapeValue : image_->shapes) {
         auto *shape = &shapeValue;
-        shape->bounds[0] = (shape->bounds[0] + tx) * sx;
-        shape->bounds[1] = (shape->bounds[1] + ty) * sy;
-        shape->bounds[2] = (shape->bounds[2] + tx) * sx;
-        shape->bounds[3] = (shape->bounds[3] + ty) * sy;
+        shape->bounds[0] = (shape->bounds[0] + offsetX) * scaleX;
+        shape->bounds[1] = (shape->bounds[1] + offsetY) * scaleY;
+        shape->bounds[2] = (shape->bounds[2] + offsetX) * scaleX;
+        shape->bounds[3] = (shape->bounds[3] + offsetY) * scaleY;
         for (auto &pathValue : shape->paths) {
             auto *path = &pathValue;
-            path->bounds[0] = (path->bounds[0] + tx) * sx;
-            path->bounds[1] = (path->bounds[1] + ty) * sy;
-            path->bounds[2] = (path->bounds[2] + tx) * sx;
-            path->bounds[3] = (path->bounds[3] + ty) * sy;
+            path->bounds[0] = (path->bounds[0] + offsetX) * scaleX;
+            path->bounds[1] = (path->bounds[1] + offsetY) * scaleY;
+            path->bounds[2] = (path->bounds[2] + offsetX) * scaleX;
+            path->bounds[3] = (path->bounds[3] + offsetY) * scaleY;
             for (auto &point : path->points) {
-                point.x = (point.x + tx) * sx;
-                point.y = (point.y + ty) * sy;
+                point.x = (point.x + offsetX) * scaleX;
+                point.y = (point.y + offsetY) * scaleY;
             }
         }
 
         if (auto *gradient = std::get_if<Gradient>(&shape->fill)) {
             gradient->xform =
-                inverse(multiply(multiply(gradient->xform, translation(tx, ty)), scaling(sx, sy)));
+                inverse(multiply(multiply(gradient->xform, translation(offsetX, offsetY)), scaling(scaleX, scaleY)));
         }
         if (auto *gradient = std::get_if<Gradient>(&shape->stroke)) {
             gradient->xform =
-                inverse(multiply(multiply(gradient->xform, translation(tx, ty)), scaling(sx, sy)));
+                inverse(multiply(multiply(gradient->xform, translation(offsetX, offsetY)), scaling(scaleX, scaleY)));
         }
 
         shape->strokeWidth *= avgs;
         shape->strokeDashOffset *= avgs;
-        for (i = 0; i < static_cast<int>(shape->strokeDashArray.size()); i++)
-            shape->strokeDashArray[i] *= avgs;
+        for (dashIndex = 0; dashIndex < static_cast<int>(shape->strokeDashArray.size()); dashIndex++)
+            shape->strokeDashArray[dashIndex] *= avgs;
     }
 }
 
