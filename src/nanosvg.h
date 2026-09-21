@@ -811,12 +811,12 @@ static float nsvg__actualOrigY(NSVGparser* p)
 
 static float nsvg__actualWidth(NSVGparser* p)
 {
-	return p->viewWidth;
+	return p->viewWidth != 0.0f ? p->viewWidth : p->image->width;
 }
 
 static float nsvg__actualHeight(NSVGparser* p)
 {
-	return p->viewHeight;
+	return p->viewHeight != 0.0f ? p->viewHeight : p->image->height;
 }
 
 static float nsvg__actualLength(NSVGparser* p)
@@ -2747,12 +2747,12 @@ static void nsvg__parseSVG(NSVGparser* p, const char** attr)
 						p->alignX = NSVG_ALIGN_MID;
 					else if (strstr(attr[i + 1], "xMax") != 0)
 						p->alignX = NSVG_ALIGN_MAX;
-					// Parse X align
-					if (strstr(attr[i + 1], "yMin") != 0)
+					// Parse Y align
+					if (strstr(attr[i + 1], "YMin") != 0)
 						p->alignY = NSVG_ALIGN_MIN;
-					else if (strstr(attr[i + 1], "yMid") != 0)
+					else if (strstr(attr[i + 1], "YMid") != 0)
 						p->alignY = NSVG_ALIGN_MID;
-					else if (strstr(attr[i + 1], "yMax") != 0)
+					else if (strstr(attr[i + 1], "YMax") != 0)
 						p->alignY = NSVG_ALIGN_MAX;
 					// Parse meet/slice
 					p->alignType = NSVG_ALIGN_MEET;

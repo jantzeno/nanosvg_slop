@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -495,18 +498,19 @@ static void test_examples(void)
 
 int main(void)
 {
-	test_css_recursion();
-	test_css_bounds();
-	test_dashes();
-	test_numeric();
-	test_inverse();
-	test_transforms();
-	test_arcs();
-	test_gradients();
-	test_radial_focus();
-	test_gradient_opacity();
-	test_visibility();
-	test_examples();
+#define RUN(fn) do { puts(#fn); fflush(stdout); fn(); } while (0)
+	RUN(test_css_recursion);
+	RUN(test_css_bounds);
+	RUN(test_dashes);
+	RUN(test_numeric);
+	RUN(test_inverse);
+	RUN(test_transforms);
+	RUN(test_arcs);
+	RUN(test_gradients);
+	RUN(test_radial_focus);
+	RUN(test_gradient_opacity);
+	RUN(test_visibility);
+	RUN(test_examples);
 	puts("NanoSVG regression checks passed");
 	return 0;
 }
