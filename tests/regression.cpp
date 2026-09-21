@@ -315,6 +315,11 @@ static void test_gradients(void)
 static void test_radial_focus(void)
 {
 	const struct { const char* units; const char* coords; double fx, fy; } cases[] = {
+		{"objectBoundingBox", "cx='.25' cy='.75' r='.5'", 0, 0},
+		{"userSpaceOnUse", "cx='40' cy='30' r='20'", 0, 0},
+		{"userSpaceOnUse", "cx='40' cy='30' r='20' fx='50'", .5, 0},
+		{"userSpaceOnUse", "fy='25' cx='40' cy='30' r='20'", 0, -.25},
+		{"userSpaceOnUse", "fx='0' cx='40' cy='30' r='20'", -2, 0},
 		{"objectBoundingBox", "cx='50%' cy='50%' fx='50%' fy='50%' r='50%'", 0, 0},
 		{"objectBoundingBox", "cx='.5' cy='.5' fx='.5' fy='.5' r='.5'", 0, 0},
 		{"userSpaceOnUse", "cx='50%' cy='50%' fx='50%' fy='50%' r='50%'", 0, 0},
@@ -345,6 +350,173 @@ static void test_radial_focus(void)
 		}
 		nsvgDelete(image);
 	}
+}
+
+static void test_paint_inheritance() {
+    using namespace nanosvg;
+    const std::string inherited = "stroke-linecap:inherit;stroke-linejoin:inherit;fill-rule:inherit;paint-order:inherit";
+    const std::string overrides = "stroke-linecap='square' stroke-linejoin='miter' fill-rule='nonzero' paint-order='normal' ";
+    for (const std::string child : {std::string{},
+            std::string("stroke-linecap=' inherit ' stroke-linejoin='inherit' fill-rule='inherit' paint-order='inherit'"),
+            "style='" + inherited + "'", overrides + "style='" + inherited + "'", overrides + "class='i'"}) {
+        for (bool group : {false, true}) {
+            const std::string svg = "<svg><style>.i{" + inherited + "}</style>"
+                "<g stroke-linecap='round' stroke-linejoin='bevel' fill-rule='evenodd' paint-order='stroke fill markers'>" +
+                (group ? "<g " + child + "><rect width='2' height='2'/></g>" : "<rect width='2' height='2' " + child + "/>") +
+                "<rect width='2' height='2'/></g></svg>";
+            auto image = nanosvg::parse(svg);
+            assert(image && (*image)->shapes.size() == 2);
+            for (const auto& shape : (*image)->shapes) {
+                assert(shape.strokeLineCap == LineCap::round && shape.strokeLineJoin == LineJoin::bevel);
+                assert(shape.fillRule == FillRule::evenodd && shape.paintOrder[0] == PaintOrder::stroke);
+            }
+        }
+    }
+    auto root = nanosvg::parse("<svg " + overrides + "style='" + inherited + "'><rect id='inherit' width='2' height='2'/></svg>");
+    assert(root && (*root)->shapes.size() == 1);
+    const auto& shape = (*root)->shapes[0];
+    assert(shape.strokeLineCap == LineCap::butt && shape.strokeLineJoin == LineJoin::miter);
+    assert(shape.fillRule == FillRule::nonzero && shape.paintOrder[0] == PaintOrder::fill && shape.id == "inherit");
+}
+
+static void test_gradient_rendering() {
+    using namespace nanosvg;
+    // Multiple stops expose the spread/focus behavior that a single-color gradient hides.
+    for (bool radial : {false, true}) for (bool stroke : {false, true}) for (bool transformed : {false, true}) {
+        const std::string tag = radial ? "radialGradient" : "linearGradient";
+        const std::string coords = radial ? "cx='24' cy='24' r='16' fx='32' fy='24'" : "x1='16' y1='0' x2='32' y2='0'";
+        const std::string geometry = stroke ? "<path d='M0 24H64' stroke-width='12' fill='none' stroke='url(#g)'/>" :
+            "<rect width='64' height='64' fill='url(#g)'/>";
+        for (const char* spread : {"pad", "repeat", "reflect"}) {
+            const std::string svg = "<svg width='160' height='160'><defs><" + tag +
+                " id='g' gradientUnits='userSpaceOnUse' spreadMethod='" + spread + "' " + coords + ">"
+                "<stop stop-color='red'/><stop offset='1' stop-color='blue'/></" + tag + "></defs>" +
+                (transformed ? "<g transform='translate(4 6) scale(2)'>" + geometry + "</g>" : geometry) + "</svg>";
+            auto image = nanosvg::parse(svg);
+            assert(image);
+            Rasterizer renderer;
+            constexpr int stride = 160*4 + 7;
+            std::vector<unsigned char> pixels(160*stride, 0xcd), cPixels(pixels);
+            const double scale = transformed ? .5 : 1;
+            const double tx = transformed ? 7 : 0, ty = transformed ? 9 : 0;
+            assert(renderer.rasterize(**image, pixels, 160, 160, stride, tx, ty, scale));
+            auto cImage = parse(svg.c_str());
+            auto cRenderer = nsvgCreateRasterizer();
+            assert(cRenderer);
+            nsvgRasterize(cRenderer, cImage, tx, ty, scale, cPixels.data(), 160, 160, stride);
+            assert(cPixels == pixels);
+            for (int x : {8, 16, 24, 32, 36, 40, 44, 48, 56}) {
+                const int px = x + (transformed ? 9 : 0), py = 24 + (transformed ? 12 : 0);
+                double t = radial ? (x >= 32 ? (x - 32)/8.0 : (32 - x)/24.0) : (x - 16)/16.0;
+                if (!strcmp(spread, "repeat")) t -= std::floor(t);
+                else if (!strcmp(spread, "reflect")) {
+                    t = std::fmod(std::abs(t), 2.0);
+                    if (t > 1) t = 2 - t;
+                } else t = std::clamp(t, 0.0, 1.0);
+                const auto* pixel = &pixels[py*stride + px*4];
+                assert(std::abs(pixel[0] - (1-t)*255) <= 3 && pixel[1] == 0);
+                assert(std::abs(pixel[2] - t*255) <= 3 && pixel[3] == 255);
+            }
+            for (int y = 0; y < 160; ++y)
+                for (int x = 640; x < stride; ++x) assert(pixels[y*stride + x] == 0xcd);
+            nsvgDeleteRasterizer(cRenderer);
+            nsvgDelete(cImage);
+        }
+    }
+}
+
+static void test_gradient_sampling_limits() {
+    using namespace nanosvg;
+    using namespace nanosvg::detail;
+    // Check the gradient blend fast paths against the existing solid-paint path.
+    CachedPaint solid{};
+    solid.type = PaintKind::color;
+    for (unsigned alpha = 0; alpha < 256; ++alpha) for (unsigned cover = 0; cover < 256; ++cover) {
+        solid.colors[0] = (alpha << 24) | 0x00cb5b11;
+        std::array<unsigned char, 4> expected{20, 40, 60, 80}, actual = expected;
+        auto coverage = static_cast<unsigned char>(cover);
+        nsvg__scanlineSolid(expected.data(), 1, &coverage, 0, 0, 0, 0, 1, &solid);
+        nsvg__blendPixel(actual.data(), coverage, solid.colors[0]);
+        assert(actual == expected);
+    }
+    assert(nsvg__gradientIndex(-.25, Spread::repeat) == 191);
+    assert(nsvg__gradientIndex(-.25, Spread::reflect) == 63);
+    assert(nsvg__gradientIndex(1, Spread::repeat) == 0);
+    assert(nsvg__gradientIndex(1, Spread::reflect) == 255);
+    for (Spread spread : {Spread::pad, Spread::reflect, Spread::repeat}) {
+        assert(nsvg__gradientIndex(INFINITY, spread) == 255);
+        assert(nsvg__gradientIndex(-INFINITY, spread) == 0);
+        assert(nsvg__gradientIndex(NAN, spread) == 0);
+    }
+    Gradient gradient;
+    gradient.kind = GradientKind::radial;
+    gradient.stops = {{0xff0000ff, 0}, {0xffff0000, 1}};
+    for (double focus : {0.0, .5, 1 - 1e-12, 1.0, 2.0, DBL_MAX}) {
+        gradient.fx = focus;
+        Paint paint = gradient;
+        CachedPaint cache{};
+        nsvg__initPaint(&cache, &paint, 1);
+        assert(nsvg__radialDistance(cache.fx, cache.fy, &cache) == 0);
+        assert(std::abs(nsvg__radialDistance(-1, 0, &cache) - 1) < 1e-12);
+        assert(std::abs(nsvg__radialDistance(0, 0, &cache) - cache.fx/(1 + cache.fx)) < 1e-12);
+        if (focus < 1) assert(std::abs(nsvg__radialDistance(1, 0, &cache) - 1) < 1e-12);
+        else assert(std::isinf(nsvg__radialDistance(2, 0, &cache)));
+    }
+    gradient.fx = gradient.fy = DBL_MAX;
+    Paint paint = gradient;
+    CachedPaint cache{};
+    nsvg__initPaint(&cache, &paint, 1);
+    assert(std::abs(std::hypot(cache.fx, cache.fy) - 1) < 1e-12);
+    gradient.fx = .3;
+    gradient.fy = -.4;
+    paint = gradient;
+    nsvg__initPaint(&cache, &paint, 1);
+    for (double angle : {0.0, .7, 1.5, 3.0, 5.0}) for (double t : {.2, 1.0, 1.5}) {
+        const double x = (1-t)*gradient.fx + t*std::cos(angle);
+        const double y = (1-t)*gradient.fy + t*std::sin(angle);
+        assert(std::abs(nsvg__radialDistance(x, y, &cache) - t) < 1e-12);
+    }
+
+    // Many short periods expose accumulation drift at repeat boundaries.
+    gradient.kind = GradientKind::linear;
+    gradient.fx = gradient.fy = 0;
+    gradient.spread = Spread::repeat;
+    gradient.xform = {0, .1, 0, 0, 0, 0};
+    paint = gradient;
+    nsvg__initPaint(&cache, &paint, 1);
+    std::vector<unsigned char> pixels(40000), coverage(10000, 255);
+    nsvg__scanlineSolid(pixels.data(), 10000, coverage.data(), 0, 0, 0, 0, 1, &cache);
+    for (int x = 0; x < 10000; x += 10) assert(pixels[x*4] == 255 && pixels[x*4+2] == 0);
+
+    const char* svg = "<svg><defs><radialGradient id='g'><stop stop-color='red'/></radialGradient></defs>"
+        "<rect width='2' height='2' fill='url(#g)'/></svg>";
+    auto image = nanosvg::parse(svg);
+    assert(image);
+    Rasterizer renderer;
+    std::array<unsigned char, 16> output;
+    output.fill(0xcd);
+    const auto untouched = output;
+    auto& edited = std::get<Gradient>((*image)->shapes[0].fill);
+    for (double value : {NAN, INFINITY, -INFINITY}) for (double* coord : {&edited.fx, &edited.fy}) {
+        *coord = value;
+        auto result = renderer.rasterize(**image, output, 2, 2, 8);
+        assert(!result && result.error() == Error::invalid_argument && output == untouched);
+        *coord = 0;
+    }
+    auto cImage = parse(svg);
+    auto cRenderer = nsvgCreateRasterizer();
+    assert(cRenderer);
+    auto* cGradient = cImage->shapes->fill.gradient;
+    for (double value : {NAN, INFINITY, -INFINITY}) for (double* coord : {&cGradient->fx, &cGradient->fy}) {
+        *coord = value;
+        nsvgRasterize(cRenderer, cImage, 0, 0, 1, output.data(), 2, 2, 8);
+        assert(output == untouched);
+        *coord = 0;
+    }
+    nsvgRasterize(cRenderer, cImage, 0, 0, 1, output.data(), 2, 2, 8);
+    assert(output[0] == 255 && output[3] == 255);
+    nsvgDeleteRasterizer(cRenderer);
+    nsvgDelete(cImage);
 }
 
 static void test_gradient_opacity(void)
@@ -518,6 +690,9 @@ int main(void)
 	RUN(test_arcs);
 	RUN(test_gradients);
 	RUN(test_radial_focus);
+	RUN(test_paint_inheritance);
+	RUN(test_gradient_rendering);
+	RUN(test_gradient_sampling_limits);
 	RUN(test_gradient_opacity);
 	RUN(test_visibility);
 	RUN(test_value_helpers);

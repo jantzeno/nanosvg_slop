@@ -105,6 +105,7 @@ typedef struct CachedPaint {
 	PaintKind type;
 	Spread spread;
 	double xform[6];
+	double fx, fy, focusScale;
 	unsigned int colors[256];
 } CachedPaint;
 
@@ -834,6 +835,32 @@ static double nsvg__clampf(double value, double lower, double upper) {
 	return value < lower ? lower : (value > upper ? upper : value);
 }
 
+static int nsvg__gradientIndex(double value, Spread spread) {
+    // Overflowed coordinates retain the pad fallback; never cast NaN to an index.
+    if (std::isfinite(value)) {
+        if (spread == Spread::repeat) value -= std::floor(value);
+        else if (spread == Spread::reflect) {
+            value = std::fmod(value, 2.0);
+            if (value < 0) value += 2.0;
+            if (value > 1) value = 2.0 - value;
+        }
+    }
+    return static_cast<int>(nsvg__clampf(value, 0, 1) * 255.0);
+}
+
+static double nsvg__radialDistance(double posX, double posY, const CachedPaint* cache) {
+    const double dx = posX - cache->fx, dy = posY - cache->fy;
+    const double distance = std::hypot(dx, dy);
+    if (distance == 0 || !std::isfinite(distance)) return distance;
+    const double projection = (dx/distance)*cache->fx + (dy/distance)*cache->fy;
+    const double root = std::sqrt(projection*projection + cache->focusScale);
+    // Distance to the unit circle along the ray from the focus. Rationalize the
+    // outward case to avoid cancellation near the boundary.
+    // ponytail: undefined SVG 1.1 boundary repeats use pad; SVG 2 needs averaged stops.
+    const double boundary = projection > 0 ? cache->focusScale/(root + projection) : root - projection;
+    return boundary > 0 ? distance/boundary : std::numeric_limits<double>::infinity();
+}
+
 static unsigned int nsvg__RGBA(unsigned char red, unsigned char green, unsigned char blue, unsigned char alpha)
 {
 	return ((unsigned int)red) | ((unsigned int)green << 8) | ((unsigned int)blue << 16) | ((unsigned int)alpha << 24);
@@ -862,6 +889,23 @@ static unsigned int nsvg__applyOpacity(unsigned int color, double opacity)
 static inline int nsvg__div255(int value)
 {
     return ((value+1) * 257) >> 16;
+}
+
+static void nsvg__blendPixel(unsigned char* dst, unsigned char coverage, unsigned int color) {
+    const int alpha = nsvg__div255(coverage * static_cast<int>(color >> 24));
+    if (alpha == 0) return;
+    if (alpha == 255) {
+        dst[0] = static_cast<unsigned char>(color);
+        dst[1] = static_cast<unsigned char>(color >> 8);
+        dst[2] = static_cast<unsigned char>(color >> 16);
+        dst[3] = 255;
+        return;
+    }
+    const int invAlpha = 255 - alpha;
+    for (int channel = 0; channel < 3; ++channel)
+        dst[channel] = static_cast<unsigned char>(nsvg__div255(((color >> (channel*8)) & 0xff)*alpha) +
+                                                 nsvg__div255(invAlpha*dst[channel]));
+    dst[3] = static_cast<unsigned char>(alpha + nsvg__div255(invAlpha*dst[3]));
 }
 
 static void nsvg__scanlineSolid(unsigned char* dst, int count, unsigned char* cover, int posX, int posY,
@@ -899,96 +943,44 @@ static void nsvg__scanlineSolid(unsigned char* dst, int count, unsigned char* co
 			dst += 4;
 		}
 	} else if (cache->type == PaintKind::linear) {
-		// TODO: spread modes.
-		// TODO: plenty of opportunities to optimize.
-		double sampleX, sampleY, sampleStep, gradientY;
 		double* xform = cache->xform;
-		int pixelIndex, srcRed, srcGreen, srcBlue, srcAlpha;
-		unsigned int color;
 
-		sampleX = ((double)posX - offsetX) / scale;
-		sampleY = ((double)posY - offsetY) / scale;
-		sampleStep = 1.0 / scale;
+		const double sampleX = ((double)posX - offsetX) / scale;
+		const double sampleY = ((double)posY - offsetY) / scale;
+		const double start = sampleX*xform[1] + sampleY*xform[3] + xform[5];
+		const double step = xform[1] / scale;
 
-		for (pixelIndex = 0; pixelIndex < count; pixelIndex++) {
-			int red,green,blue,alpha,invAlpha;
-			gradientY = sampleX*xform[1] + sampleY*xform[3] + xform[5];
-			color = cache->colors[(int)nsvg__clampf(gradientY*255.0, 0, 255.0)];
-			srcRed = (color) & 0xff;
-			srcGreen = (color >> 8) & 0xff;
-			srcBlue = (color >> 16) & 0xff;
-			srcAlpha = (color >> 24) & 0xff;
-
-			alpha = nsvg__div255((int)cover[0] * srcAlpha);
-			invAlpha = 255 - alpha;
-
-			// Premultiply
-			red = nsvg__div255(srcRed * alpha);
-			green = nsvg__div255(srcGreen * alpha);
-			blue = nsvg__div255(srcBlue * alpha);
-
-			// Blend over
-			red += nsvg__div255(invAlpha * (int)dst[0]);
-			green += nsvg__div255(invAlpha * (int)dst[1]);
-			blue += nsvg__div255(invAlpha * (int)dst[2]);
-			alpha += nsvg__div255(invAlpha * (int)dst[3]);
-
-			dst[0] = (unsigned char)red;
-			dst[1] = (unsigned char)green;
-			dst[2] = (unsigned char)blue;
-			dst[3] = (unsigned char)alpha;
-
+		for (int pixelIndex = 0; pixelIndex < count; pixelIndex++) {
+			// Index from the row origin so long scanlines do not accumulate drift.
+			const auto color = cache->colors[nsvg__gradientIndex(start + pixelIndex*step, cache->spread)];
+			nsvg__blendPixel(dst, *cover, color);
 			cover++;
 			dst += 4;
-			sampleX += sampleStep;
 		}
 	} else if (cache->type == PaintKind::radial) {
-		// TODO: spread modes.
-		// TODO: plenty of opportunities to optimize.
-		// TODO: focus (fx,fy)
-		double sampleX, sampleY, sampleStep, gradientX, gradientY, distance;
 		double* xform = cache->xform;
-		int pixelIndex, srcRed, srcGreen, srcBlue, srcAlpha;
-		unsigned int color;
 
-		sampleX = ((double)posX - offsetX) / scale;
-		sampleY = ((double)posY - offsetY) / scale;
-		sampleStep = 1.0 / scale;
+		const double sampleX = ((double)posX - offsetX) / scale;
+		const double sampleY = ((double)posY - offsetY) / scale;
+		const double startX = sampleX*xform[0] + sampleY*xform[2] + xform[4];
+		const double startY = sampleX*xform[1] + sampleY*xform[3] + xform[5];
+		const double stepX = xform[0] / scale, stepY = xform[1] / scale;
 
-		for (pixelIndex = 0; pixelIndex < count; pixelIndex++) {
-			int red,green,blue,alpha,invAlpha;
-			gradientX = sampleX*xform[0] + sampleY*xform[2] + xform[4];
-			gradientY = sampleX*xform[1] + sampleY*xform[3] + xform[5];
-			distance = sqrt(gradientX*gradientX + gradientY*gradientY);
-			color = cache->colors[(int)nsvg__clampf(distance*255.0, 0, 255.0)];
-			srcRed = (color) & 0xff;
-			srcGreen = (color >> 8) & 0xff;
-			srcBlue = (color >> 16) & 0xff;
-			srcAlpha = (color >> 24) & 0xff;
-
-			alpha = nsvg__div255((int)cover[0] * srcAlpha);
-			invAlpha = 255 - alpha;
-
-			// Premultiply
-			red = nsvg__div255(srcRed * alpha);
-			green = nsvg__div255(srcGreen * alpha);
-			blue = nsvg__div255(srcBlue * alpha);
-
-			// Blend over
-			red += nsvg__div255(invAlpha * (int)dst[0]);
-			green += nsvg__div255(invAlpha * (int)dst[1]);
-			blue += nsvg__div255(invAlpha * (int)dst[2]);
-			alpha += nsvg__div255(invAlpha * (int)dst[3]);
-
-			dst[0] = (unsigned char)red;
-			dst[1] = (unsigned char)green;
-			dst[2] = (unsigned char)blue;
-			dst[3] = (unsigned char)alpha;
-
-			cover++;
-			dst += 4;
-			sampleX += sampleStep;
-		}
+		// Select the calculation once per scanline, keeping centered gradients cheap.
+		const auto scanline = [&](auto radialDistance) {
+			for (int pixelIndex = 0; pixelIndex < count; pixelIndex++) {
+				const double distance = radialDistance(startX + pixelIndex*stepX, startY + pixelIndex*stepY);
+				const auto color = cache->colors[nsvg__gradientIndex(distance, cache->spread)];
+				nsvg__blendPixel(dst, *cover, color);
+				cover++;
+				dst += 4;
+			}
+		};
+		if (cache->fx == 0 && cache->fy == 0) scanline([](double x, double y) {
+			const double squared = x*x + y*y;
+			return std::isfinite(squared) ? std::sqrt(squared) : std::hypot(x, y);
+		});
+		else scanline([&](double x, double y) { return nsvg__radialDistance(x, y, cache); });
 	}
 }
 
@@ -1161,6 +1153,20 @@ static void nsvg__initPaint(CachedPaint* cache, const Paint* paint, double opaci
 
 	cache->spread = grad->spread;
 	std::copy(grad->xform.begin(), grad->xform.end(), cache->xform);
+	cache->fx = grad->fx;
+	cache->fy = grad->fy;
+	const double focusLength = std::hypot(cache->fx, cache->fy);
+	if (focusLength >= 1) {
+		// SVG 1.1 projects outside foci onto the circle. Scale first so even
+		// finite coordinates whose length overflows can be normalized.
+		const double largest = std::max(std::abs(cache->fx), std::abs(cache->fy));
+		cache->fx /= largest;
+		cache->fy /= largest;
+		const double length = std::hypot(cache->fx, cache->fy);
+		cache->fx /= length;
+		cache->fy /= length;
+		cache->focusScale = 0;
+	} else cache->focusScale = (1 - focusLength)*(1 + focusLength);
 
 	if (static_cast<int>(grad->stops.size()) == 0) {
 		for (stopIndex = 0; stopIndex < 256; stopIndex++)
@@ -1270,6 +1276,7 @@ static bool valid_image(const Image& image) {
                 if ((grad->kind != GradientKind::linear && grad->kind != GradientKind::radial) ||
                     grad->spread < Spread::pad || grad->spread > Spread::repeat) return false;
                 if (grad->stops.size() > INT_MAX) return false;
+                if (!std::isfinite(grad->fx) || !std::isfinite(grad->fy)) return false;
                 for (double value : grad->xform) if (!std::isfinite(value)) return false;
                 for (const auto& stop : grad->stops) if (!std::isfinite(stop.offset)) return false;
             }

@@ -85,10 +85,14 @@ the rasterizer remains reusable.
 
 SVG parsing remains permissive. Empty input succeeds, and unsupported or
 malformed SVG may produce an empty or partial image. A successful parse is
-not a conformance or validity certificate. Existing rendering limits remain,
-including incomplete CSS/gradient inheritance, no repeat/reflect gradient
-rendering, and no off-center radial focal rendering. Double precision does
-not change the rasterizer's tessellation or antialiasing policy.
+not a conformance or validity certificate. CSS and gradient-reference inheritance
+remain incomplete; explicit `inherit` is supported for line caps, line joins,
+fill rules, and paint order. Linear and radial gradients support `pad`, `repeat`,
+and `reflect`. Radial gradients support off-center focal points, with omitted
+`fx`/`fy` defaulting independently to `cx`/`cy`. Outside focal points are projected
+onto the circle as in SVG 1.1; rays without a forward circle intersection use the
+last stop for every spread mode. Double precision does not change the
+rasterizer's tessellation or antialiasing policy.
 
 ## Build and install
 

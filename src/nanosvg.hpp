@@ -39,6 +39,7 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -69,7 +70,7 @@ struct Gradient {
     GradientKind kind = GradientKind::linear;
     Transform xform{1, 0, 0, 1, 0, 0};
     Spread spread = Spread::pad;
-    double fx = 0.0, fy = 0.0;
+    double fx = 0.0, fy = 0.0; // Focal point relative to the center, in unit-circle coordinates.
     std::vector<GradientStop> stops;
 };
 using Paint = std::variant<std::monostate, Color, Gradient>;
@@ -189,7 +190,8 @@ struct LinearData {
 };
 struct RadialData {
     Coordinate centerX{50, CoordinateUnit::percent}, centerY{50, CoordinateUnit::percent};
-    Coordinate radius{50, CoordinateUnit::percent}, focusX{}, focusY{};
+    Coordinate radius{50, CoordinateUnit::percent};
+    std::optional<Coordinate> focusX, focusY;
 };
 struct GradientData {
     std::string identifier, ref;
@@ -782,7 +784,6 @@ static LineCap parse_line_cap(std::string_view str) {
         return LineCap::round;
     else if (str == "square")
         return LineCap::square;
-    // TODO: handle inherit.
     return LineCap::butt;
 }
 
@@ -793,7 +794,6 @@ static LineJoin parse_line_join(std::string_view str) {
         return LineJoin::round;
     else if (str == "bevel")
         return LineJoin::bevel;
-    // TODO: handle inherit.
     return LineJoin::miter;
 }
 
@@ -802,7 +802,6 @@ static FillRule parse_fill_rule(std::string_view str) {
         return FillRule::nonzero;
     else if (str == "evenodd")
         return FillRule::evenodd;
-    // TODO: handle inherit.
     return FillRule::nonzero;
 }
 
@@ -819,7 +818,6 @@ static std::array<PaintOrder, 3> parse_paint_order(std::string_view str) {
         return {PaintOrder::stroke, PaintOrder::fill, PaintOrder::markers};
     else if (str == "stroke markers fill")
         return {PaintOrder::stroke, PaintOrder::markers, PaintOrder::fill};
-    // TODO: handle inherit.
     return {PaintOrder::fill, PaintOrder::stroke, PaintOrder::markers};
 }
 
@@ -1149,6 +1147,17 @@ void Parser::parse_attribs(std::span<const Attribute> attributes) {
 }
 bool Parser::parse_attr(std::string_view name, std::string_view value) {
     auto &attr = attributes_.back();
+    if ((name == "stroke-linecap" || name == "stroke-linejoin" || name == "fill-rule" || name == "paint-order") &&
+        trim(value) == "inherit") {
+        const Attributes initial;
+        const auto &parent = attributes_.size() > 1 ? attributes_[attributes_.size() - 2] : initial;
+        // Earlier declarations on this element may have overwritten the inherited value.
+        if (name == "stroke-linecap") attr.strokeLineCap = parent.strokeLineCap;
+        else if (name == "stroke-linejoin") attr.strokeLineJoin = parent.strokeLineJoin;
+        else if (name == "fill-rule") attr.fillRule = parent.fillRule;
+        else attr.paintOrder = parent.paintOrder;
+        return true;
+    }
     if (name == "style")
         parse_style(value);
     else if (name == "display") {
@@ -1299,7 +1308,8 @@ Paint Parser::create_gradient(std::string_view gradientId, const Bounds &bounds,
     } else {
         const auto &radial = std::get<RadialData>(data->geometry);
         const double centerX = pixels(radial.centerX, originX, width), centerY = pixels(radial.centerY, originY, height);
-        const double focusX = pixels(radial.focusX, originX, width), focusY = pixels(radial.focusY, originY, height);
+        const double focusX = pixels(radial.focusX.value_or(radial.centerX), originX, width);
+        const double focusY = pixels(radial.focusY.value_or(radial.centerY), originY, height);
         const double radius = pixels(radial.radius, 0, length);
         gradient.kind = GradientKind::radial;
         gradient.xform = {radius, 0, 0, radius, centerX, centerY};

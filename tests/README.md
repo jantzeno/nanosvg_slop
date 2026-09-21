@@ -98,6 +98,9 @@ coverage percentages are not a baseline for the rewritten implementation.
 Geometry comparisons use tolerances; interpolated pixels permit small
 rounding differences. Integer geometry, opaque interior colors, buffer guards,
 and ownership remain strict. This is broad deterministic regression coverage,
-not full SVG conformance or fuzzing. Repeat/reflect gradient rendering,
-off-center radial focal rendering, and full CSS/gradient inheritance remain
-outside the feature set.
+not full SVG conformance or fuzzing. Gradient regressions cover repeat/reflect
+pixels, negative positions, long scanlines, off-center and boundary focal points,
+omitted focal coordinates, invalid caller edits, and C/native output agreement.
+Explicit inheritance checks cover line caps, joins, fill rules, and paint order,
+including child overrides followed by `inherit`. Full CSS/gradient-reference
+inheritance remains outside the feature set.
