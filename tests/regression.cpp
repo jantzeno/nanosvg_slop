@@ -8,10 +8,12 @@
 #include <math.h>
 #include <float.h>
 
+// Compile the single-header implementations to exercise private helpers.
 #define NANOSVG_IMPLEMENTATION
-#include "nanosvg.h"
 #define NANOSVGRAST_IMPLEMENTATION
+#include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "nanosvgrast.hpp"
 
 static NSVGimage* parse(const char* svg)
 {
@@ -39,9 +41,9 @@ static void test_css_recursion(void)
 		assert(image->shapes != NULL);
 		assert(image->shapes->fill.type == NSVG_PAINT_COLOR);
 		assert((image->shapes->fill.color & 0xffffff) ==
-			(i == 1 || i == 2 ? NSVG_RGB(255, 0, 0) : NSVG_RGB(0, 0, 0)));
+			(i == 1 || i == 2 ? nanosvg::detail::rgb(255, 0, 0) : nanosvg::detail::rgb(0, 0, 0)));
 		if (i == 2)
-			assert((image->shapes->stroke.color & 0xffffff) == NSVG_RGB(0, 0, 255));
+			assert((image->shapes->stroke.color & 0xffffff) == nanosvg::detail::rgb(0, 0, 255));
 		nsvgDelete(image);
 	}
 }
@@ -66,7 +68,7 @@ static void test_css_bounds(void)
 			image = parse(svg);
 			assert(image->shapes != NULL);
 			assert((image->shapes->fill.color & 0xffffff) ==
-				(i >= 6 ? NSVG_RGB(255, 0, 0) : NSVG_RGB(0, 0, 0)));
+				(i >= 6 ? nanosvg::detail::rgb(255, 0, 0) : nanosvg::detail::rgb(0, 0, 0)));
 			nsvgDelete(image);
 		}
 	}
@@ -125,51 +127,32 @@ static void test_numeric(void)
 		"<svg width=\"10\" height=\"10\"><polyline points=\"0,0 99999999,0\" fill=\"none\" stroke=\"#000\" stroke-width=\"1\"/></svg>"
 	};
 	unsigned char pixels[64*64*4];
-	float special[] = {NAN, INFINITY, -INFINITY, FLT_MAX, -FLT_MAX};
-	float belowMax = nextafterf((float)INT_MAX, 0);
-	float aboveMin = nextafterf((float)INT_MIN, 0);
+	double special[] = {NAN, INFINITY, -INFINITY, DBL_MAX, -DBL_MAX};
+	double belowMax = nextafter((double)INT_MAX, 0);
+	double aboveMin = nextafter((double)INT_MIN, 0);
 	size_t i;
 	NSVGimage* image;
-	assert(nsvg__roundf_clamp(NAN) == 0);
-	assert(nsvg__roundf_clamp(INFINITY) == INT_MAX);
-	assert(nsvg__roundf_clamp(-INFINITY) == INT_MIN);
-	assert(nsvg__roundf_clamp(FLT_MAX) == INT_MAX);
-	assert(nsvg__roundf_clamp(-FLT_MAX) == INT_MIN);
-	assert(nsvg__roundf_clamp((float)INT_MAX) == INT_MAX);
-	assert(nsvg__roundf_clamp((float)INT_MIN) == INT_MIN);
-	assert(nsvg__roundf_clamp(belowMax) == (int)belowMax);
-	assert(nsvg__roundf_clamp(aboveMin) == (int)aboveMin);
-	assert(nsvg__roundf_clamp(1.5f) == 2 && nsvg__roundf_clamp(-1.5f) == -2);
-	assert(nsvg__iadd_sat(INT_MAX, 1) == INT_MAX);
-	assert(nsvg__iadd_sat(INT_MIN, -1) == INT_MIN);
-	assert(nsvg__iadd_sat(INT_MAX, INT_MAX) == INT_MAX);
-	assert(nsvg__iadd_sat(INT_MIN, INT_MIN) == INT_MIN);
-	assert(nsvg__iadd_sat(INT_MAX, INT_MIN) == -1);
-	assert(nsvg__iadd_sat(10, -20) == -10);
-	assert(nsvg__curveDivs(1, NSVG_PI, 0.25f) == 3);
-	assert(nsvg__curveDivs(FLT_MAX, NSVG_PI, 0.25f) == 2);
+	assert(nanosvg::detail::nsvg__roundf_clamp(NAN) == 0);
+	assert(nanosvg::detail::nsvg__roundf_clamp(INFINITY) == INT_MAX);
+	assert(nanosvg::detail::nsvg__roundf_clamp(-INFINITY) == INT_MIN);
+	assert(nanosvg::detail::nsvg__roundf_clamp(DBL_MAX) == INT_MAX);
+	assert(nanosvg::detail::nsvg__roundf_clamp(-DBL_MAX) == INT_MIN);
+	assert(nanosvg::detail::nsvg__roundf_clamp((double)INT_MAX) == INT_MAX);
+	assert(nanosvg::detail::nsvg__roundf_clamp((double)INT_MIN) == INT_MIN);
+	assert(nanosvg::detail::nsvg__roundf_clamp(belowMax) == INT_MAX);
+	assert(nanosvg::detail::nsvg__roundf_clamp(aboveMin) == INT_MIN);
+	assert(nanosvg::detail::nsvg__roundf_clamp(1.5) == 2 && nanosvg::detail::nsvg__roundf_clamp(-1.5) == -2);
+	assert(nanosvg::detail::nsvg__iadd_sat(INT_MAX, 1) == INT_MAX);
+	assert(nanosvg::detail::nsvg__iadd_sat(INT_MIN, -1) == INT_MIN);
+	assert(nanosvg::detail::nsvg__iadd_sat(INT_MAX, INT_MAX) == INT_MAX);
+	assert(nanosvg::detail::nsvg__iadd_sat(INT_MIN, INT_MIN) == INT_MIN);
+	assert(nanosvg::detail::nsvg__iadd_sat(INT_MAX, INT_MIN) == -1);
+	assert(nanosvg::detail::nsvg__iadd_sat(10, -20) == -10);
+	assert(nanosvg::detail::nsvg__curveDivs(1, std::numbers::pi, 0.25) == 3);
+	assert(nanosvg::detail::nsvg__curveDivs(DBL_MAX, std::numbers::pi, 0.25) == 2);
 	for (i = 0; i < sizeof(special)/sizeof(special[0]); i++) {
-		NSVGparser* p = nsvg__createParser();
-		float args[7] = {8, special[i], 0, 0, 1, 20, 20};
-		float x = 0, y = 0;
-		int j;
-		assert(p != NULL);
-		nsvg__moveTo(p, x, y);
-		nsvg__pathArcTo(p, &x, &y, args, 0);
-		assert(x == 20 && y == 20);
-		for (j = 0; j < p->npts*2; j++) assert(isfinite(p->pts[j]));
-		args[1] = 8;
-		args[2] = special[i];
-		args[5] = 30;
-		nsvg__pathArcTo(p, &x, &y, args, 0);
-		assert(x == 30 && y == 20);
-		for (j = 0; j < p->npts*2; j++) assert(isfinite(p->pts[j]));
-		args[5] = NAN;
-		nsvg__pathArcTo(p, &x, &y, args, 0);
-		assert(x == 30 && y == 20);
-		nsvg__deleteParser(p);
-		assert(nsvg__curveDivs(special[i], NSVG_PI, 0.25f) == 2);
-		assert(nsvg__curveDivs(1, special[i], 0.25f) == 2);
+		assert(nanosvg::detail::nsvg__curveDivs(special[i], std::numbers::pi, 0.25) == 2);
+		assert(nanosvg::detail::nsvg__curveDivs(1, special[i], 0.25) == 2);
 	}
 	for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
 		image = parse(cases[i]);
@@ -188,18 +171,14 @@ static void test_numeric(void)
 
 static void test_inverse(void)
 {
-	const float matrices[][6] = {{0,0,0,0,0,0}, {1,2,2,4,3,4}, {2,1,1,3,4,5}};
-	const float identity[6] = {1,0,0,1,0,0};
-	size_t i;
-	for (i = 0; i < sizeof(matrices)/sizeof(matrices[0]); i++) {
-		float input[6], output[6] = {42,42,42,42,42,42};
-		int j;
-		memcpy(input, matrices[i], sizeof(input));
-		nsvg__xformInverse(output, input);
-		assert(memcmp(input, matrices[i], sizeof(input)) == 0);
-		if (i == 2) nsvg__xformMultiply(output, input);
-		for (j = 0; j < 6; j++) assert(fabsf(output[j] - identity[j]) < 1e-6f);
-	}
+    const nanosvg::Transform matrices[] = {{0,0,0,0,0,0}, {1,2,2,4,3,4}, {2,1,1,3,4,5}};
+    for (std::size_t i = 0; i < std::size(matrices); ++i) {
+        const auto before = matrices[i];
+        auto output = nanosvg::detail::inverse(matrices[i]);
+        if (i == 2) output = nanosvg::detail::multiply(output, matrices[i]);
+        assert(matrices[i] == before);
+        for (int j = 0; j < 6; ++j) assert(std::abs(output[j]-nanosvg::detail::identity[j]) < 1e-6);
+    }
 }
 
 static void test_transforms(void)
@@ -213,31 +192,29 @@ static void test_transforms(void)
 		"matrix(1 2 3 4 5 6", "translate(2", "scale(2", "rotate(2",
 		"skewX(2", "skewY(2", "scale 2)", "scale(1e999)", "scale(.)"
 	};
-	const struct { const char* text; float matrix[6]; } valid[] = {
+	const struct { const char* text; double matrix[6]; } valid[] = {
 		{"matrix(2 1 3 4 5 6)", {2,1,3,4,5,6}},
 		{"translate(2)", {1,0,0,1,2,0}}, {"translate(2,3)", {1,0,0,1,2,3}},
 		{"scale(2)", {2,0,0,2,0,0}}, {"scale(2,3)", {2,0,0,3,0,0}},
 		{"rotate(90)", {0,1,-1,0,0,0}}, {"rotate(90,2,3)", {0,1,-1,0,5,1}},
 		{"skewX(45)", {1,0,1,1,0,0}}, {"skewY(45)", {1,1,0,1,0,0}},
 		{"translate (7,9) scale(2 3)", {2,0,0,3,7,9}},
-		{"scale(.5,-2e-1)", {.5f,0,0,-.2f,0,0}}
+		{"scale(.5,-2e-1)", {.5,0,0,-.2,0,0}}
 	};
 	size_t i;
 	int j, mixed;
 	for (i = 0; i < sizeof(invalid)/sizeof(invalid[0]); i++) {
 		for (mixed = 0; mixed < 2; mixed++) {
 			char text[256];
-			float actual[6];
-			const float expected[][6] = {{1,0,0,1,0,0}, {2,0,0,3,7,9}};
+			const double expected[][6] = {{1,0,0,1,0,0}, {2,0,0,3,7,9}};
 			snprintf(text, sizeof(text), mixed ? "translate(7 9) %s scale(2 3)" : "%s", invalid[i]);
-			nsvg__parseTransform(actual, text);
-			for (j = 0; j < 6; j++) assert(fabsf(actual[j] - expected[mixed][j]) < 1e-6f);
+			const auto actual = nanosvg::detail::parse_transform(text);
+			for (j = 0; j < 6; j++) assert(fabs(actual[j] - expected[mixed][j]) < 1e-6);
 		}
 	}
 	for (i = 0; i < sizeof(valid)/sizeof(valid[0]); i++) {
-		float actual[6];
-		nsvg__parseTransform(actual, valid[i].text);
-		for (j = 0; j < 6; j++) assert(fabsf(actual[j] - valid[i].matrix[j]) < 1e-6f);
+		const auto actual = nanosvg::detail::parse_transform(valid[i].text);
+		for (j = 0; j < 6; j++) assert(fabs(actual[j] - valid[i].matrix[j]) < 1e-6);
 	}
 	{
 		NSVGimage* image = parse("<svg width=\"64\" height=\"64\"><defs><linearGradient id=\"g\" gradientTransform=\"translate(2) scale()\"><stop stop-color=\"red\"/></linearGradient></defs><rect width=\"10\" height=\"10\" transform=\"translate(7 9) rotate(1 2) scale(2 3)\" fill=\"url(#g)\"/></svg>");
@@ -252,33 +229,37 @@ static void test_transforms(void)
 
 static void test_arcs(void)
 {
-	const float radii[] = {195631, 1000, 1000, 10};
-	const float ends[][2] = {{39.013f, 7.101f}, {1.8f, 60}, {2.2f, 60}, {10, 70}};
-	size_t i;
-	int sweep;
-	for (sweep = 0; sweep < 2; sweep++) {
-		for (i = 0; i < sizeof(radii)/sizeof(radii[0]); i++) {
-			NSVGparser* p = nsvg__createParser();
-			float x = 0, y = 60;
-			float args[7] = {radii[i], radii[i], 0, 0, (float)sweep, ends[i][0], ends[i][1] - y};
-			int j;
-			assert(p != NULL);
-			nsvg__moveTo(p, x, y);
-			nsvg__pathArcTo(p, &x, &y, args, 1);
-			assert(fabsf(p->pts[p->npts*2-2] - ends[i][0]) < 1e-3f);
-			assert(fabsf(p->pts[p->npts*2-1] - ends[i][1]) < 1e-3f);
-			for (j = 0; j < p->npts*2; j++) assert(isfinite(p->pts[j]));
-			if (i < 2) assert(p->npts == 4);
-			if (i == 1) assert(p->pts[3] == 60 && p->pts[5] == 60);
-			if (i >= 2) assert(p->pts[3] != 60 || p->pts[5] != 60);
-			args[0] = 3;
-			args[1] = 4;
-			nsvg__pathLineTo(p, &x, &y, args, 1);
-			assert(fabsf(p->pts[p->npts*2-2] - (ends[i][0]+3)) < 1e-5f);
-			assert(fabsf(p->pts[p->npts*2-1] - (ends[i][1]+4)) < 1e-5f);
-			nsvg__deleteParser(p);
-		}
-	}
+    const double radii[] = {195631, 1000, 1000, 10};
+    const double ends[][2] = {{39.013, 7.101}, {1.8, 60}, {2.2, 60}, {10, 70}};
+    for (int sweep = 0; sweep < 2; ++sweep) {
+        for (std::size_t i = 0; i < std::size(radii); ++i) {
+            for (bool line : {false, true}) {
+                char svg[512];
+                std::snprintf(svg, sizeof(svg), "<svg width='64' height='64'><path d='M0 60 a%.17g %.17g 0 0 %d %.17g %.17g%s'/></svg>",
+                    radii[i], radii[i], sweep, ends[i][0], ends[i][1]-60, line ? " l3 4" : "");
+                auto image = nanosvg::parse(svg);
+                assert(image && (*image)->shapes.size() == 1);
+                const auto& points = (*image)->shapes.front().paths.front().points;
+                assert(std::abs(points.back().x-(ends[i][0]+(line ? 3 : 0))) < 1e-5);
+                assert(std::abs(points.back().y-(ends[i][1]+(line ? 4 : 0))) < 1e-5);
+                for (const auto& point : points) assert(std::isfinite(point.x) && std::isfinite(point.y));
+                if (!line) {
+                    if (i < 2) assert(points.size() == 4);
+                    if (i == 1) assert(points[1].y == 60 && points[2].y == 60);
+                    if (i >= 2) assert(points[1].y != 60 || points[2].y != 60);
+                }
+            }
+        }
+    }
+    for (const char* value : {"1e999", "-1e999", "1.7976931348623157e308", "-1.7976931348623157e308"}) {
+        char svg[512];
+        std::snprintf(svg, sizeof(svg), "<svg width='64' height='64'><path d='M0 0 A8 %s 0 0 1 20 20 A8 8 %s 0 1 30 20 A8 8 0 0 1 1e999 20'/></svg>", value, value);
+        auto image = nanosvg::parse(svg);
+        assert(image && (*image)->shapes.size() == 1);
+        const auto& points = (*image)->shapes.front().paths.front().points;
+        assert(points.back().x == 30 && points.back().y == 20);
+        for (const auto& point : points) assert(std::isfinite(point.x) && std::isfinite(point.y));
+    }
 }
 
 static void test_gradients(void)
@@ -307,21 +288,21 @@ static void test_gradients(void)
 					NSVGshape* b = images[1]->shapes;
 					NSVGpaint* pa = variant ? &a->stroke : &a->fill;
 					NSVGpaint* pb = variant ? &b->stroke : &b->fill;
-					float sx = transformed ? 2.0f : 1.0f;
+					double sx = transformed ? 2.0 : 1.0;
 					assert(pa->type == (radial ? NSVG_PAINT_RADIAL_GRADIENT : NSVG_PAINT_LINEAR_GRADIENT));
 					assert(pb->type == pa->type);
-					for (j = 0; j < 6; j++) assert(fabsf(pa->gradient->xform[j] - pb->gradient->xform[j]) < 1e-6f);
+					for (j = 0; j < 6; j++) assert(fabs(pa->gradient->xform[j] - pb->gradient->xform[j]) < 1e-6);
 					if (radial) {
-						float radius = userSpace ? .5f : sqrtf((80*80+40*40)/2.0f)*.5f;
-						assert(fabsf(pa->gradient->xform[0] - 1/(radius*sx)) < 1e-6f);
+						double radius = userSpace ? .5 : sqrt((80*80+40*40)/2.0)*.5;
+						assert(fabs(pa->gradient->xform[0] - 1/(radius*sx)) < 1e-6);
 						assert(pa->gradient->fx == pb->gradient->fx && pa->gradient->fy == pb->gradient->fy);
-						assert(fabsf(pa->gradient->fx - (userSpace ? -.25f : -20.0f)/radius) < 1e-6f);
-						assert(fabsf(pa->gradient->fy - (userSpace ? .25f : 10.0f)/radius) < 1e-6f);
+						assert(fabs(pa->gradient->fx - (userSpace ? -.25 : -20.0)/radius) < 1e-6);
+						assert(fabs(pa->gradient->fy - (userSpace ? .25 : 10.0)/radius) < 1e-6);
 					} else {
-						float width = (userSpace ? 1.0f : 80.0f)*sx;
-						float origin = (userSpace ? 0.0f : 10.0f)*sx + (transformed ? 3.0f : 0.0f);
-						assert(fabsf(pa->gradient->xform[1] - 1/width) < 1e-6f);
-						assert(fabsf(pa->gradient->xform[5] + origin/width) < 1e-6f);
+						double width = (userSpace ? 1.0 : 80.0)*sx;
+						double origin = (userSpace ? 0.0 : 10.0)*sx + (transformed ? 3.0 : 0.0);
+						assert(fabs(pa->gradient->xform[1] - 1/width) < 1e-6);
+						assert(fabs(pa->gradient->xform[5] + origin/width) < 1e-6);
 					}
 				}
 				nsvgDelete(images[0]);
@@ -333,11 +314,11 @@ static void test_gradients(void)
 
 static void test_radial_focus(void)
 {
-	const struct { const char* units; const char* coords; float fx, fy; } cases[] = {
+	const struct { const char* units; const char* coords; double fx, fy; } cases[] = {
 		{"objectBoundingBox", "cx='50%' cy='50%' fx='50%' fy='50%' r='50%'", 0, 0},
 		{"objectBoundingBox", "cx='.5' cy='.5' fx='.5' fy='.5' r='.5'", 0, 0},
 		{"userSpaceOnUse", "cx='50%' cy='50%' fx='50%' fy='50%' r='50%'", 0, 0},
-		{"userSpaceOnUse", "cx='40' cy='30' fx='50' fy='25' r='20'", .5f, -.25f},
+		{"userSpaceOnUse", "cx='40' cy='30' fx='50' fy='25' r='20'", .5, -.25},
 		{"userSpaceOnUse", "cx='40px' cy='30px' fx='40px' fy='30px' r='20px'", 0, 0},
 		{"objectBoundingBox", "cx='.5' cy='.5' fx='.25' fy='.75' r='0'", 0, 0},
 		{"userSpaceOnUse", "cx='40' cy='30' fx='40' fy='30' r='0'", 0, 0},
@@ -358,8 +339,8 @@ static void test_radial_focus(void)
 		for (stroke = 0; stroke < 2; stroke++) {
 			NSVGpaint* paint = stroke ? &image->shapes->stroke : &image->shapes->fill;
 			assert(paint->type == NSVG_PAINT_RADIAL_GRADIENT && paint->gradient != NULL);
-			assert(fabsf(paint->gradient->fx - cases[i].fx) < 1e-6f);
-			assert(fabsf(paint->gradient->fy - cases[i].fy) < 1e-6f);
+			assert(fabs(paint->gradient->fx - cases[i].fx) < 1e-6);
+			assert(fabs(paint->gradient->fy - cases[i].fy) < 1e-6);
 			for (j = 0; j < 6; j++) assert(isfinite(paint->gradient->xform[j]));
 		}
 		nsvgDelete(image);
@@ -368,9 +349,9 @@ static void test_radial_focus(void)
 
 static void test_gradient_opacity(void)
 {
-	const struct { float fill, stroke, stop, shape; int fillAlpha, strokeAlpha; } cases[] = {
+	const struct { double fill, stroke, stop, shape; int fillAlpha, strokeAlpha; } cases[] = {
 		{0, 0, 1, 1, 0, 0}, {1, 1, 1, 1, 255, 255},
-		{.25f, .5f, 1, 1, 63, 127}, {.25f, .5f, .5f, .5f, 31, 63},
+		{.25, .5, 1, 1, 63, 127}, {.25, .5, .5, .5, 31, 63},
 		{1, 1, 0, 1, 0, 0}, {1, 1, 1, 0, 255, 255}
 	};
 	const char* invalid[] = {"#missing", "#empty", "#broken", "#cycle", "#", ""};
@@ -410,7 +391,7 @@ static void test_gradient_opacity(void)
 						assert(p->gradient != NULL && p->gradient->nstops == 2);
 						for (j = 0; j < p->gradient->nstops; j++) {
 							assert((p->gradient->stops[j].color >> 24) == (unsigned int)alpha);
-							assert((p->gradient->stops[j].color & 0xffffff) == NSVG_RGB(255,0,0));
+							assert((p->gradient->stops[j].color & 0xffffff) == nanosvg::detail::rgb(255,0,0));
 						}
 					} else {
 						assert((p->color >> 24) == (unsigned int)alpha);
@@ -476,6 +457,35 @@ static void test_visibility(void)
 	}
 }
 
+static void test_value_helpers(void)
+{
+    using namespace nanosvg;
+    using namespace nanosvg::detail;
+    static_assert(!std::is_copy_constructible_v<Parser>);
+    static_assert(!std::is_move_constructible_v<Parser>);
+    const Transform transform{2, 0, 0, 3, 4, 5};
+    const auto before = transform;
+    const Point point{1, 2};
+    const auto result = transform_point(point, transform);
+    assert(result.x == 6 && result.y == 11);
+    assert(point.x == 1 && point.y == 2 && transform == before);
+    const std::array<Point, 4> curve{{{0, 0}, {0, 40}, {40, 40}, {40, 0}}};
+    const auto original = curve;
+    const auto bounds = curve_bounds(curve);
+    assert((bounds == Bounds{0, 0, 40, 30}));
+    for (std::size_t i = 0; i < curve.size(); ++i)
+        assert(curve[i].x == original[i].x && curve[i].y == original[i].y);
+    const std::string text = "12.5e999";
+    const auto number = parse_number(std::string_view(text).substr(0, 4));
+    assert(number.error == std::errc{} && number.value == 12.5 && number.consumed == 4);
+    assert(text == "12.5e999");
+    assert(parse_number(text).error == std::errc::result_out_of_range);
+    assert(parse_number(".").error == std::errc::invalid_argument);
+    assert(parse_number("2em").consumed == 1);
+    assert(parse_coordinate_raw("2em").units == CoordinateUnit::em);
+    assert(parse_coordinate_raw("2ex").units == CoordinateUnit::ex);
+}
+
 static void test_examples(void)
 {
 	const char* files[] = {"example/nano.svg", "example/drawing.svg", "example/23.svg"};
@@ -488,7 +498,7 @@ static void test_examples(void)
 		assert(image != NULL && image->shapes != NULL && rasterizer != NULL);
 		assert(isfinite(image->width) && isfinite(image->height));
 		assert(image->width > 0 && image->height > 0);
-		nsvgRasterize(rasterizer, image, 0, 0, 64/fmaxf(image->width, image->height), pixels, 64, 64, 64*4);
+		nsvgRasterize(rasterizer, image, 0, 0, 64/fmax(image->width, image->height), pixels, 64, 64, 64*4);
 		for (j = 0; j < 64*64; j++) visible |= pixels[j*4+3];
 		assert(visible != 0);
 		nsvgDeleteRasterizer(rasterizer);
@@ -510,6 +520,7 @@ int main(void)
 	RUN(test_radial_focus);
 	RUN(test_gradient_opacity);
 	RUN(test_visibility);
+	RUN(test_value_helpers);
 	RUN(test_examples);
 	puts("NanoSVG regression checks passed");
 	return 0;

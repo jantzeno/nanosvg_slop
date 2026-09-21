@@ -1,15 +1,15 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(NanoSVG C)
+project(NanoSVG VERSION 2.0.0 LANGUAGES C CXX)
 include(GNUInstallDirs)
+option(NANOSVG_ALL_COLOR_KEYWORDS "Enable all SVG color keywords" OFF)
 
-# CMake needs *.c files to do something useful
-configure_file(src/nanosvg.h ${CMAKE_CURRENT_BINARY_DIR}/nanosvg.c COPYONLY)
-configure_file(src/nanosvgrast.h ${CMAKE_CURRENT_BINARY_DIR}/nanosvgrast.c COPYONLY)
-
-add_library(nanosvg ${CMAKE_CURRENT_BINARY_DIR}/nanosvg.c)
-
-find_library(MATH_LIBRARY m) # Business as usual
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nanosvg.cpp"
+    CONTENT "#define NANOSVG_IMPLEMENTATION\n#include \"nanosvg.h\"\n")
+add_library(nanosvg "${CMAKE_CURRENT_BINARY_DIR}/nanosvg.cpp")
+add_library(NanoSVG::nanosvg ALIAS nanosvg)
+target_compile_features(nanosvg PUBLIC cxx_std_23)
+find_library(MATH_LIBRARY m)
 if(MATH_LIBRARY)
     target_link_libraries(nanosvg PUBLIC ${MATH_LIBRARY})
 endif()
@@ -18,12 +18,17 @@ target_include_directories(nanosvg PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/nanosvg>"
 )
-target_compile_definitions(nanosvg PRIVATE NANOSVG_IMPLEMENTATION)
+target_compile_definitions(nanosvg PRIVATE
+    $<$<BOOL:${NANOSVG_ALL_COLOR_KEYWORDS}>:NANOSVG_ALL_COLOR_KEYWORDS>)
 
-# Same for nanosvgrast
-add_library(nanosvgrast ${CMAKE_CURRENT_BINARY_DIR}/nanosvgrast.c)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nanosvgrast.cpp"
+    CONTENT "#define NANOSVGRAST_IMPLEMENTATION\n#include \"nanosvgrast.h\"\n")
+add_library(nanosvgrast "${CMAKE_CURRENT_BINARY_DIR}/nanosvgrast.cpp")
+add_library(NanoSVG::nanosvgrast ALIAS nanosvgrast)
 target_link_libraries(nanosvgrast PUBLIC nanosvg)
-target_compile_definitions(nanosvgrast PRIVATE NANOSVGRAST_IMPLEMENTATION)
+set_target_properties(nanosvg nanosvgrast PROPERTIES
+    VERSION ${PROJECT_VERSION} SOVERSION 2
+    CXX_EXTENSIONS OFF WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 # Installation and export:
 
@@ -31,8 +36,8 @@ include(CMakePackageConfigHelpers)
 
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
-    VERSION 1.0
-    COMPATIBILITY AnyNewerVersion
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
 )
 
 install(TARGETS nanosvg nanosvgrast
@@ -56,6 +61,8 @@ install(
     FILES
       src/nanosvg.h
       src/nanosvgrast.h
+      src/nanosvg.hpp
+      src/nanosvgrast.hpp
     DESTINATION
       ${CMAKE_INSTALL_INCLUDEDIR}/nanosvg
   )

@@ -1,134 +1,103 @@
-From the repository root, run the parser, rasterizer, and public API suites:
+# NanoSVG 2 checks
+
+Run the native C++23 parser/rasterizer, public C API, and historical regressions:
 
 ```sh
-CC=clang sh tests/run.sh
+CC=clang CXX=clang++ sh tests/run.sh
 ```
 
-Run every header configuration and the CMake consumer matrix:
+The runner checks standalone C++23 headers, builds the optional libraries,
+compiles the public C suite as C99, and uses AddressSanitizer,
+UndefinedBehaviorSanitizer, and float-cast-overflow
+checks by default. Assertions remain enabled in Release builds. It uses only
+compiler tools, a POSIX shell, `mktemp`, and `timeout`; each executable has a
+ten-second timeout. All build products and generated fixtures use temporary
+directories. Leak detection defaults off for traced environments; enable it
+with `ASAN_OPTIONS=detect_leaks=1` where supported. Override `CFLAGS` and
+`CXXFLAGS` for alternate instrumentation; language standards are set by the
+runner.
+
+On Linux, `failures.cpp` also overrides C++ allocation and wraps C `calloc`
+and `free` with the linker's `--wrap` option. It fails each allocation in native parsing,
+C graph export, native rendering, and C rendering, checks error results, and
+verifies renderer reuse. Allocation counts must return to zero after cleanup,
+including when LeakSanitizer cannot run under tracing.
 
 ```sh
 CC=clang CXX=clang++ sh tests/all.sh
 ```
 
-The scripts require a POSIX shell, `mktemp`, and `timeout`. The full run also
-needs CMake 3.25 or newer, CTest, a C compiler, and a C++ compiler supporting
-C++23. All builds, fixtures, and installations use temporary directories.
-Each test executable has a ten-second timeout. Assertions remain active in
-Release builds even when the compiler defines `NDEBUG`.
+The full run repeats the suites with all color keywords, runs the CMake
+consumer matrix, and runs Xmake checks when Xmake is installed.
 
-`run.sh` enables AddressSanitizer, UndefinedBehaviorSanitizer, and
-float-cast-overflow checks. Leak detection defaults to off for environments
-that execute under tracing; set `ASAN_OPTIONS=detect_leaks=1` to enable it
-elsewhere. Override `CC` and `CFLAGS` for other configurations:
-
-```sh
-CC=clang++ CFLAGS='-x c++ -std=c++11 -O1 -g -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all' sh tests/run.sh
-CC=clang CFLAGS='-std=c99 -O1 -g -fsanitize=memory -fsanitize-memory-track-origins=2 -fPIE -pie' sh tests/run.sh
-```
-
-`all.sh` runs both suites in five header configurations: C99, C99 with all
-color keywords, C++11 with C linkage, C++23 with all color keywords and C
-linkage, and C++23 with the optional `NANOSVG_CPLUSPLUS` and
-`NANOSVGRAST_CPLUSPLUS` switches. Its `CFLAGS` override is shared across
-languages; omit language-selection flags when using that runner. CMake
-consumer builds exercise ordinary Debug/Release settings without sanitizers.
-
-The coverage inventory is:
-
-| Area | Required checks |
+| Area | Coverage |
 | --- | --- |
-| Geometry | Every primitive; absolute and relative path commands; implicit repetition; smooth control points; quadratic conversion; arc flags, radii, and endpoints; closure; tight bounds; degenerate shapes |
-| Coordinates | Physical and font units; 72/96/144 DPI; output units; percentages with and without a viewBox; all nine explicit alignments with meet/slice in both viewport orientations; nonzero origins; inferred dimensions; nested transforms |
-| Styles | Common and extended colors; malformed color fallback; opacity clamping; CSS classes and inline styles; inheritance; independent display and visibility; identifiers |
-| Gradients | Linear/radial paints; one to three stops; interpolation and endpoint padding; sorted stops; forward/shared/missing/cyclic references; spread metadata; stop/fill/stroke/shape opacity; all 256 alpha levels for solid/linear/radial fills and strokes; normalized radial focus |
-| Rasterizer | Fill winding rules; all caps and joins; miter fallback; all paint-order permutations; straight-alpha blending; dashes and negative offsets; antialias coverage; translation, scaling, and clipping; renderer reuse; deterministic output; unchanged input paths |
-| Memory and API | Mutable input lifetime; memory/file equivalence; empty and missing files; path deep copies and independent ownership; null deletion; padded strides and guarded buffers; malformed/truncated input; bounded strings; multiple shapes |
-| Historical regressions | Numeric overflow and nonfinite values; singular transforms; bounded CSS recursion; malformed transforms; degenerate arcs/gradients/dashes; all three bundled SVG examples |
-| Build and packaging | C and C++ callers; parser-only and rasterizer consumers; static/shared libraries; Debug/Release; source subdirectories; installed and relocated packages; default/lib/lib64 directories; custom includes; paths containing spaces; package version and exported dependency propagation |
+| Geometry | Primitives; absolute/relative path commands; smooth and quadratic curves; arcs; closure; tight bounds; degeneracies |
+| Coordinates | Physical/font units; DPI; output units; viewBox percentages and alignment; inferred dimensions; nested transforms |
+| Paint | Colors; opacity; class/inline styles; inheritance; visibility; paint order; linear/radial gradients and references |
+| Rendering | Fill rules; caps/joins; miter fallback; dashes; antialiasing; blending; translation/scaling/clipping; reuse; padded strides; unchanged geometry |
+| Native API | Double precision beyond float range/resolution; long decimals; variant gradients; unique ownership; deep path copies; string-view lifetime; file/error results; invalid buffers; moved rasterizers |
+| C adapter | Independent C graph ownership; malloc/free-compatible path copies; C/native output agreement; caller edits to geometry and gradient stops; long graph destruction |
+| Failures | Malformed/truncated input; numeric overflow and nonfinite values; singular transforms; CSS/gradient cycles; allocation failure and recovery |
 
-Run the CMake portion alone with:
+`functional.c` exercises public C behavior through the adapter. Its numeric
+fields and helpers now use double. `native.cpp` exercises the native API and
+checks adapter parity. `regression.cpp` additionally enables the native header
+implementations to test pure numerical and token helpers; those helpers are
+not a supported interface. Parser state remains private, with arc regressions
+exercised through the public API. The three existing SVG examples remain
+smoke-test inputs.
+
+Native checks cover typed and string output units, numeric tokens longer than
+63 characters, CSS gradient references longer than 511 characters, finite
+stroke widths under large transforms, and owned results after input destruction
+and parser container growth. Caller edits remain supported; invalid enum values
+are rejected before writing to the destination.
+
+`headers.sh` copies only the two native headers to a temporary directory and
+checks parser-only, raster-only, combined, and separate implementation builds.
+It then adds the two C headers to check C99 callers, C++11 declarations,
+combined/separate C++23 implementations, and rejection of implementation
+macros in C. It checks multiple consumer translation units, repeated includes,
+and both C/native include orders with implementation macros defined before
+the first NanoSVG include.
+
+## Packaging
 
 ```sh
 CC=clang CXX=clang++ sh tests/install.sh
+CC=clang CXX=clang++ sh tests/xmake.sh
 ```
 
-This runs 16 configurations: Debug/Release × source-subdirectory/default/lib/lib64
-× default-static/shared. Each runs three CTest executables (48 executions):
-the public API suite as C, the same suite as C++, and a parser-only C caller.
-The rasterizer consumers link only `nanosvgrast`, so its parser dependency and
-include directories must propagate. Imported target names remain
-`NanoSVG::nanosvg` and `NanoSVG::nanosvgrast`.
+The CMake matrix covers 16 configurations: Debug/Release × source-subdirectory,
+default installation, explicit lib, or explicit lib64 × static/shared.
+Each runs five CTest consumers (80 executions): C API from C, C API from C++,
+C parser-only, native C++ API, and native parser-only. This checks dependency
+and C++23 propagation, version 2.0.0, rejection of version 1, paths containing
+spaces, relocation, DESTDIR confinement, and custom include directories.
+All four installed headers support single-header use; the C adapter
+implementations require C++23. Builds generate implementation translation
+units in their build directories. Checks verify that `src` and the installed
+header directory contain exactly the four public headers.
 
-The `lib64` cases also use `CMAKE_INSTALL_INCLUDEDIR=custom/include`.
-Generated `.c` files must exactly match their implementation headers. Installs
-use `DESTDIR`, and every manifest entry must remain under the selected prefix.
-Consumers use `find_package(NanoSVG 1.0 EXACT REQUIRED)` after relocation.
+Xmake checks Debug/static and Release/shared builds and installed C/native
+consumers in a temporary project. It skips with a message if Xmake is absent.
+These scripts currently exercise Linux; other operating systems require their
+own validation.
 
-For the modern C++ rewrite, `functional.c` is the portable acceptance suite.
-It calls only public APIs and can compile without either implementation macro:
+## Coverage
 
 ```sh
-scratch=$(mktemp -d)
-cc -std=c99 -DNSVG_TEST_EXTERNAL -I/path/to/include/nanosvg \
-    tests/functional.c -L/path/to/lib -lnanosvgrast -lnanosvg -lm \
-    -o "$scratch/functional"
-"$scratch/functional" "$scratch"
-rm -rf "$scratch"
+CC=clang CXX=clang++ LLVM_PROFDATA=llvm-profdata LLVM_COV=llvm-cov sh tests/coverage.sh
 ```
 
-For a static C++ implementation, link that C-compiled object with the C++
-linker or the exported CMake targets so the C++ runtime is supplied. Shared
-libraries must be on the platform's runtime search path. CMake consumers
-already compile C and C++ callers separately from the library.
+Use matching Clang/LLVM versions. This reports native parser/rasterizer and
+C adapter coverage from all three behavioral suites. The old version-1 header
+coverage percentages are not a baseline for the rewritten implementation.
 
-The compatibility boundary is **source compatibility**, including the public
-names, callable signatures, enum meanings, accessible fields, and ownership
-rules. There are no fixed `sizeof`, alignment, or member-offset assertions;
-callers must rebuild against the replacement headers. `nsvgParse` receives a
-writable NUL-terminated buffer; returned images must outlive that buffer.
-`nsvgDelete` releases the image graph. `nsvgDuplicatePath` produces a single
-independent path whose points and path allocation the caller can release
-with `free`. Rasterization writes non-premultiplied RGBA into caller-owned
-storage, honors row stride, and preserves the image geometry. Do not expose
-C++ exceptions, STL types, or C++ allocation ownership through this C API.
-
-Geometry comparisons use numerical tolerances, and interpolated pixel tests
-allow small rounding differences instead of freezing whole-image hashes.
-Opaque interior colors, buffer guards, ownership, and exact integer geometry
-remain strict checks. Preserve these behavioral tests during the rewrite.
-`regression.c` additionally calls private `nsvg__` helpers; those checks belong
-to the current implementation and must be adapted or retired when its
-internals change. The header-only configuration and generated-source checks
-also describe current packaging, not a required C++ implementation layout.
-
-The new percentage and vertical-alignment cases are required regressions,
-with no expected-failure bypass. Percentages fall back to the declared
-viewport when viewBox dimensions are absent, and preserveAspectRatio
-recognizes the SVG `YMin`, `YMid`, and `YMax` spellings.
-
-Measure executed source coverage with matching Clang/LLVM tools:
-
-```sh
-CC=clang LLVM_PROFDATA=llvm-profdata LLVM_COV=llvm-cov sh tests/coverage.sh
-```
-
-This measures both suites in the default C99 header configuration and prints
-line, branch, region, and function coverage for the two library headers.
-It requires no test framework or persistent build directory. The initial
-Clang/LLVM 22.1.8 baseline is:
-
-| Source | Lines | Branches | Functions |
-| --- | ---: | ---: | ---: |
-| nanosvg.h | 96.76% | 84.81% | 100% |
-| nanosvgrast.h | 98.37% | 89.55% | 100% |
-| Combined | 97.25% | 85.87% | 100% |
-
-The consumer matrix was verified with CMake 4.3.0 on Linux; CMake 3.25 itself
-and other operating systems have not been exercised here. Coverage is a
-measure of exercised code, not proof of correctness for every possible SVG.
-The suite has broad deterministic cases; it is not full SVG conformance,
-allocation-failure injection, fuzzing, or a cross-platform CI service.
-The parser's partial CSS/gradient inheritance and the rasterizer's missing
-repeat/reflect spread and off-center focal rendering remain outside the
-promised feature set. Tests check spread/focus metadata without claiming
-those rendering features work.
+Geometry comparisons use tolerances; interpolated pixels permit small
+rounding differences. Integer geometry, opaque interior colors, buffer guards,
+and ownership remain strict. This is broad deterministic regression coverage,
+not full SVG conformance or fuzzing. Repeat/reflect gradient rendering,
+off-center radial focal rendering, and full CSS/gradient inheritance remain
+outside the feature set.

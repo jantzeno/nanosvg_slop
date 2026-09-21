@@ -8,10 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef NSVG_TEST_EXTERNAL
-#define NANOSVG_IMPLEMENTATION
-#define NANOSVGRAST_IMPLEMENTATION
-#endif
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -20,16 +16,16 @@
 
 static const char* scratch;
 static char context[8192];
-static void near_value(float actual, float expected, float tolerance)
+static void near_value(double actual, double expected, double tolerance)
 {
-	if (!(fabsf(actual - expected) <= tolerance)) {
-		fprintf(stderr, "expected %.9g, got %.9g (tolerance %.9g)\n", expected, actual, tolerance);
+	if (!(fabs(actual - expected) <= tolerance)) {
+		fprintf(stderr, "expected %.17g, got %.17g (tolerance %.17g)\n", expected, actual, tolerance);
 		fprintf(stderr, "SVG: %s\n", context);
 		abort();
 	}
 }
 
-static NSVGimage* parse_units(const char* svg, const char* units, float dpi)
+static NSVGimage* parse_units(const char* svg, const char* units, double dpi)
 {
 	char* input = (char*)malloc(strlen(svg) + 1);
 	NSVGimage* image;
@@ -55,12 +51,12 @@ static NSVGimage* element(const char* body)
 	return parse(svg);
 }
 
-static void bounds(const float* actual, float x0, float y0, float x1, float y1)
+static void bounds(const double* actual, double x0, double y0, double x1, double y1)
 {
-	near_value(actual[0], x0, 1e-3f);
-	near_value(actual[1], y0, 1e-3f);
-	near_value(actual[2], x1, 1e-3f);
-	near_value(actual[3], y1, 1e-3f);
+	near_value(actual[0], x0, 1e-3);
+	near_value(actual[1], y0, 1e-3);
+	near_value(actual[2], x1, 1e-3);
+	near_value(actual[3], y1, 1e-3);
 }
 
 static void valid_paths(NSVGimage* image)
@@ -90,8 +86,8 @@ static void same_paths(NSVGimage* a, NSVGimage* b)
 	for (; pa && pb; pa = pa->next, pb = pb->next) {
 		int i;
 		assert(pa->npts == pb->npts && pa->closed == pb->closed);
-		for (i = 0; i < pa->npts*2; i++) near_value(pa->pts[i], pb->pts[i], 1e-3f);
-		for (i = 0; i < 4; i++) near_value(pa->bounds[i], pb->bounds[i], 1e-3f);
+		for (i = 0; i < pa->npts*2; i++) near_value(pa->pts[i], pb->pts[i], 1e-3);
+		for (i = 0; i < 4; i++) near_value(pa->bounds[i], pb->bounds[i], 1e-3);
 	}
 	assert(pa == NULL && pb == NULL);
 }
@@ -107,10 +103,10 @@ static void render(NSVGimage* image, unsigned char* pixels)
 static void rgba(const unsigned char* pixels, int x, int y, int red, int green, int blue, int alpha, int tolerance)
 {
 	const unsigned char* p = pixels + (y*64+x)*4;
-	near_value(p[0], (float)red, (float)tolerance);
-	near_value(p[1], (float)green, (float)tolerance);
-	near_value(p[2], (float)blue, (float)tolerance);
-	near_value(p[3], (float)alpha, (float)tolerance);
+	near_value(p[0], (double)red, (double)tolerance);
+	near_value(p[1], (double)green, (double)tolerance);
+	near_value(p[2], (double)blue, (double)tolerance);
+	near_value(p[3], (double)alpha, (double)tolerance);
 }
 
 static void test_defaults(void)
@@ -143,7 +139,7 @@ static void test_defaults(void)
 
 static void test_primitives(void)
 {
-	const struct { const char* svg; float box[4]; int closed; } cases[] = {
+	const struct { const char* svg; double box[4]; int closed; } cases[] = {
 		{"<rect x='8' y='12' width='16' height='20'/>", {8,12,24,32}, 1},
 		{"<rect x='8' y='12' width='16' height='20' rx='3'/>", {8,12,24,32}, 1},
 		{"<rect x='8' y='12' width='16' height='20' ry='50'/>", {8,12,24,32}, 1},
@@ -165,8 +161,8 @@ static void test_primitives(void)
 		assert(path && !path->next && path->closed == cases[i].closed);
 		bounds(image->shapes->bounds, cases[i].box[0], cases[i].box[1], cases[i].box[2], cases[i].box[3]);
 		if (path->closed) {
-			near_value(path->pts[0], path->pts[path->npts*2-2], 1e-5f);
-			near_value(path->pts[1], path->pts[path->npts*2-1], 1e-5f);
+			near_value(path->pts[0], path->pts[path->npts*2-2], 1e-5);
+			near_value(path->pts[1], path->pts[path->npts*2-1], 1e-5);
 		}
 		valid_paths(image);
 		nsvgDelete(image);
@@ -221,8 +217,8 @@ static void test_path_commands(void)
 		same_paths(a, b);
 		valid_paths(a);
 		path = a->shapes->paths;
-		near_value(path->pts[path->npts*2-2], 40, 1e-3f);
-		near_value(path->pts[path->npts*2-1], 35, 1e-3f);
+		near_value(path->pts[path->npts*2-2], 40, 1e-3);
+		near_value(path->pts[path->npts*2-1], 35, 1e-3);
 		nsvgDelete(a);
 		nsvgDelete(b);
 	}
@@ -239,10 +235,10 @@ static void test_path_commands(void)
 static void test_units(void)
 {
 	const char* units[] = {"px", "pt", "pc", "mm", "cm", "in", "em", "ex"};
-	const float dpi[] = {72, 96, 144};
+	const double dpi[] = {72, 96, 144};
 	size_t i, d;
 	for (d = 0; d < COUNT(dpi); d++) {
-		float factors[] = {1, dpi[d]/72, dpi[d]/6, dpi[d]/25.4f, dpi[d]/2.54f, dpi[d], 10, 5.2f};
+		double factors[] = {1, dpi[d]/72, dpi[d]/6, dpi[d]/25.4, dpi[d]/2.54, dpi[d], 10, 5.2};
 		for (i = 0; i < COUNT(units); i++) {
 			char svg[512];
 			NSVGimage* image;
@@ -264,8 +260,8 @@ static void test_units(void)
 		bounds(image->shapes->bounds, 20, 20, 120, 70);
 		nsvgDelete(image);
 		image = parse("<svg width='1in' height='25.4mm'><rect width='1in' height='72pt'/></svg>");
-		near_value(image->width, 96, 1e-4f);
-		near_value(image->height, 96, 1e-4f);
+		near_value(image->width, 96, 1e-4);
+		near_value(image->height, 96, 1e-4);
 		bounds(image->shapes->bounds, 0, 0, 96, 96);
 		nsvgDelete(image);
 	}
@@ -279,9 +275,9 @@ static void test_viewbox(void)
 	for (x = 0; x < 3; x++) for (y = 0; y < 3; y++)
 	for (slice = 0; slice < 2; slice++) for (portrait = 0; portrait < 2; portrait++) {
 		char svg[512];
-		float side = slice ? 200.0f : 100.0f;
-		float left = ((portrait ? 100 : 200) - side)*x/2;
-		float top = ((portrait ? 200 : 100) - side)*y/2;
+		double side = slice ? 200.0 : 100.0;
+		double left = ((portrait ? 100 : 200) - side)*x/2;
+		double top = ((portrait ? 200 : 100) - side)*y/2;
 		NSVGimage* image;
 		snprintf(svg, sizeof(svg), "<svg width='%d' height='%d' viewBox='10 20 100 100' preserveAspectRatio='%s%s %s'>"
 			"<rect x='10' y='20' width='100' height='100'/></svg>",
@@ -335,21 +331,21 @@ static void test_percentages_without_viewbox(void)
 		same_paths(image, explicitView);
 		a = image->shapes;
 		b = explicitView->shapes;
-		near_value(a->strokeWidth, b->strokeWidth, 1e-4f);
-		near_value(a->strokeDashOffset, b->strokeDashOffset, 1e-4f);
+		near_value(a->strokeWidth, b->strokeWidth, 1e-4);
+		near_value(a->strokeDashOffset, b->strokeDashOffset, 1e-4);
 		assert(a->strokeDashCount == b->strokeDashCount);
-		for (j = 0; j < a->strokeDashCount; j++) near_value(a->strokeDashArray[j], b->strokeDashArray[j], 1e-4f);
-		if (i == 0) near_value(a->strokeWidth, sqrtf(25000.0f)*.1f, 1e-4f);
+		for (j = 0; j < a->strokeDashCount; j++) near_value(a->strokeDashArray[j], b->strokeDashArray[j], 1e-4);
+		if (i == 0) near_value(a->strokeWidth, sqrt(25000.0)*.1, 1e-4);
 		if (i == 1) {
-			float radius = sqrtf(25000.0f)*.1f;
+			double radius = sqrt(25000.0)*.1;
 			bounds(a->bounds, 100-radius, 50-radius, 100+radius, 50+radius);
 		}
 		if (a->fill.type == NSVG_PAINT_LINEAR_GRADIENT || a->fill.type == NSVG_PAINT_RADIAL_GRADIENT) {
 			assert(a->fill.type == b->fill.type);
-			for (j = 0; j < 6; j++) near_value(a->fill.gradient->xform[j], b->fill.gradient->xform[j], 1e-4f);
+			for (j = 0; j < 6; j++) near_value(a->fill.gradient->xform[j], b->fill.gradient->xform[j], 1e-4);
 			if (a->fill.type == NSVG_PAINT_RADIAL_GRADIENT) {
-				near_value(a->fill.gradient->fx, b->fill.gradient->fx, 1e-4f);
-				near_value(a->fill.gradient->fy, b->fill.gradient->fy, 1e-4f);
+				near_value(a->fill.gradient->fx, b->fill.gradient->fx, 1e-4);
+				near_value(a->fill.gradient->fy, b->fill.gradient->fy, 1e-4);
 			}
 		}
 		nsvgDelete(explicitView);
@@ -441,7 +437,7 @@ static void test_gradient_data(void)
 		assert(fill && stroke && fill != stroke && fill->nstops == 3 && stroke->nstops == 3);
 		assert(fill->spread == spreadValues[i] && stroke->spread == spreadValues[i]);
 		assert(fill->stops[0].offset == 0 && fill->stops[0].color == 0xff0000ffu);
-		assert(fill->stops[1].offset == .5f && fill->stops[1].color == 0x7f00ff00u);
+		assert(fill->stops[1].offset == .5 && fill->stops[1].color == 0x7f00ff00u);
 		assert(fill->stops[2].offset == 1 && fill->stops[2].color == 0xffff0000u);
 		if (radial) assert(fill->fx == 0 && fill->fy == 0);
 		fill->stops[0].color = 0;
@@ -508,12 +504,12 @@ static void test_gradient_opacity_and_focus(void)
 		image = element(body);
 		shape = image->shapes;
 		for (n = 0; n < 2; n++, shape = shape->next) {
-			assert(shape && shape->opacity == .5f);
+			assert(shape && shape->opacity == .5);
 			for (stroke = 0; stroke < 2; stroke++) {
 				NSVGpaint* paint = stroke ? &shape->stroke : &shape->fill;
 				assert(paint->type == NSVG_PAINT_RADIAL_GRADIENT);
-				near_value(paint->gradient->fx, .5f, 1e-5f);
-				near_value(paint->gradient->fy, -.5f, 1e-5f);
+				near_value(paint->gradient->fx, .5, 1e-5);
+				near_value(paint->gradient->fy, -.5, 1e-5);
 				assert((paint->gradient->stops[0].color >> 24) == (n != stroke ? 63u : 31u));
 			}
 		}
@@ -534,11 +530,11 @@ static void test_opacity_range(void)
 		NSVGimage* image;
 		snprintf(body, sizeof(body), "<defs><%s id='g'><stop stop-color='red'/></%s></defs>"
 			"<rect x='8' y='8' width='40' height='40' fill='%s' stroke='%s' stroke-width='4' "
-			"fill-opacity='%.9g' stroke-opacity='%.9g'/>", tag, tag, paint, paint, alpha/255.0, alpha/255.0);
+			"fill-opacity='%.17g' stroke-opacity='%.17g'/>", tag, tag, paint, paint, alpha/255.0, alpha/255.0);
 		image = element(body);
 		render(image, pixels);
-		near_value(pixels[(24*64+24)*4+3], (float)alpha, 1);
-		near_value(pixels[(24*64+7)*4+3], (float)alpha, 1);
+		near_value(pixels[(24*64+24)*4+3], (double)alpha, 1);
+		near_value(pixels[(24*64+7)*4+3], (double)alpha, 1);
 		nsvgDelete(image);
 	}
 }
@@ -632,7 +628,7 @@ static void test_paint_order_and_blending(void)
 		render(image, pixels);
 		rgba(pixels, 16, 16, 128, 0, 127, 255, 1);
 		rgba(pixels, 48, 48, 255, 0, 0, 255, 0);
-		image->shapes->opacity = .5f;
+		image->shapes->opacity = .5;
 		render(image, pixels);
 		rgba(pixels, 16, 16, 85, 0, 170, 191, 2);
 		nsvgDelete(image);
@@ -678,17 +674,17 @@ static void test_raster_buffers(void)
 
 static void test_raster_transform_and_reuse(void)
 {
-	const struct { float tx, ty, scale; int box[4]; } cases[] = {
+	const struct { double tx, ty, scale; int box[4]; } cases[] = {
 		{0, 0, 1, {8,8,24,24}}, {4, 6, 2, {20,22,52,54}},
-		{-20, -20, 2, {0,0,28,28}}, {0, 0, .5f, {4,4,12,12}}, {100, 100, 1, {0,0,0,0}}
+		{-20, -20, 2, {0,0,28,28}}, {0, 0, .5, {4,4,12,12}}, {100, 100, 1, {0,0,0,0}}
 	};
 	NSVGimage* image = element("<rect x='8' y='8' width='16' height='16' fill='blue'/>");
 	NSVGrasterizer* r = nsvgCreateRasterizer();
 	NSVGpath* path = image->shapes->paths;
-	float* original = (float*)malloc(path->npts*2*sizeof(float));
+	double* original = (double*)malloc(path->npts*2*sizeof(double));
 	size_t i;
 	assert(r && original);
-	memcpy(original, path->pts, path->npts*2*sizeof(float));
+	memcpy(original, path->pts, path->npts*2*sizeof(double));
 	for (i = 0; i < COUNT(cases); i++) {
 		unsigned char a[64*64*4], b[64*64*4];
 		int x, y;
@@ -700,7 +696,7 @@ static void test_raster_transform_and_reuse(void)
 			assert(a[(y*64+x)*4+3] == (inside ? 255 : 0));
 			if (inside) rgba(a, x, y, 0, 0, 255, 255, 0);
 		}
-		assert(memcmp(original, path->pts, path->npts*2*sizeof(float)) == 0);
+		assert(memcmp(original, path->pts, path->npts*2*sizeof(double)) == 0);
 	}
 	free(original);
 	nsvgDeleteRasterizer(r);
@@ -717,7 +713,7 @@ static void test_antialias(void)
 	assert(pixels[(8*64+8)*4+3] > 0 && pixels[(8*64+8)*4+3] < 255);
 	assert(pixels[(16*64+16)*4+3] == 255 && pixels[(26*64+26)*4+3] == 0);
 	for (i = 0; i < 64*64; i++) sum += pixels[i*4+3];
-	near_value((float)sum, 16*16*255, 2*255);
+	near_value((double)sum, 16*16*255, 2*255);
 	nsvgDelete(image);
 }
 
@@ -781,7 +777,7 @@ static void test_files_and_ownership(void)
 	assert(copy && copy != source && copy->pts != source->pts && copy->next == NULL);
 	assert(copy->npts == source->npts && copy->closed == source->closed);
 	assert(memcmp(copy->bounds, source->bounds, sizeof(copy->bounds)) == 0);
-	assert(memcmp(copy->pts, source->pts, source->npts*2*sizeof(float)) == 0);
+	assert(memcmp(copy->pts, source->pts, source->npts*2*sizeof(double)) == 0);
 	copy->pts[0] += 10;
 	assert(copy->pts[0] != source->pts[0]);
 	nsvgDelete(file);

@@ -21,9 +21,7 @@
 #include <float.h>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#define NANOSVG_IMPLEMENTATION
 #include "nanosvg.h"
-#define NANOSVGRAST_IMPLEMENTATION
 #include "nanosvgrast.h"
 
 int main()
@@ -35,7 +33,7 @@ int main()
 	const char* filename = "../example/23.svg";
 
 	printf("parsing %s\n", filename);
-	image = nsvgParseFromFile(filename, "px", 96.0f);
+	image = nsvgParseFromFile(filename, "px", 96.0);
 	if (image == NULL) {
 		printf("Could not open SVG image.\n");
 		goto error;
@@ -64,6 +62,7 @@ int main()
 error:
 	nsvgDeleteRasterizer(rast);
 	nsvgDelete(image);
+	free(img);
 
 	return 0;
 }

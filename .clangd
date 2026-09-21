@@ -1,0 +1,4 @@
+If:
+  PathMatch: 'src/nanosvg(rast)?\.h(pp)?'
+CompileFlags:
+  Add: [-xc++, -std=c++23, -DNANOSVG_IMPLEMENTATION, -DNANOSVGRAST_IMPLEMENTATION]
