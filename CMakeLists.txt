@@ -24,6 +24,7 @@ target_compile_definitions(nanosvgrast PRIVATE NANOSVGRAST_IMPLEMENTATION)
 
 # Installation and export:
 
+include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 write_basic_package_version_file(
@@ -34,6 +35,9 @@ write_basic_package_version_file(
 
 install(TARGETS nanosvg nanosvgrast
         EXPORT ${PROJECT_NAME}Targets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 export(EXPORT ${PROJECT_NAME}Targets 
@@ -41,7 +45,7 @@ export(EXPORT ${PROJECT_NAME}Targets
        NAMESPACE ${PROJECT_NAME}::
 )
 
-set(ConfigPackageLocation lib/cmake/${PROJECT_NAME})
+set(ConfigPackageLocation ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
 configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in
   "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
