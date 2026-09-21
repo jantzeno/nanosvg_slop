@@ -130,6 +130,7 @@ typedef struct NSVGpaint {
 	union {
 		unsigned int color;
 		NSVGgradient* gradient;
+		float opacity;		// Parser-only: opacity while type is NSVG_PAINT_UNDEF.
 	};
 } NSVGpaint;
 
@@ -864,7 +865,7 @@ static NSVGgradientData* nsvg__findGradientData(NSVGparser* p, const char* id)
 	return NULL;
 }
 
-static NSVGgradient* nsvg__createGradient(NSVGparser* p, const char* id, const float* localBounds, float *xform, signed char* paintType)
+static NSVGgradient* nsvg__createGradient(NSVGparser* p, const char* id, const float* localBounds, float *xform, float opacity, signed char* paintType)
 {
 	NSVGgradientData* data = NULL;
 	NSVGgradientData* ref = NULL;
@@ -872,7 +873,7 @@ static NSVGgradient* nsvg__createGradient(NSVGparser* p, const char* id, const f
 	NSVGgradient* grad;
 	float ox, oy, sw, sh, sl;
 	int nstops = 0;
-	int refIter;
+	int refIter, i;
 
 	data = nsvg__findGradientData(p, id);
 	if (data == NULL) return NULL;
@@ -945,6 +946,11 @@ static NSVGgradient* nsvg__createGradient(NSVGparser* p, const char* id, const f
 	grad->spread = data->spread;
 	memcpy(grad->stops, stops, nstops*sizeof(NSVGgradientStop));
 	grad->nstops = nstops;
+	// Each paint owns its stops; leave the shared gradient definition unchanged.
+	for (i = 0; i < nstops; i++) {
+		unsigned int color = grad->stops[i].color;
+		grad->stops[i].color = (color & 0x00ffffff) | (unsigned int)((color >> 24)*opacity) << 24;
+	}
 
 	*paintType = data->type;
 
@@ -1044,6 +1050,7 @@ static void nsvg__addShape(NSVGparser* p)
 		shape->fill.color |= (unsigned int)(attr->fillOpacity*255) << 24;
 	} else if (attr->hasFill == 2) {
 		shape->fill.type = NSVG_PAINT_UNDEF;
+		shape->fill.opacity = attr->fillOpacity;
 	}
 
 	// Set stroke
@@ -1055,6 +1062,7 @@ static void nsvg__addShape(NSVGparser* p)
 		shape->stroke.color |= (unsigned int)(attr->strokeOpacity*255) << 24;
 	} else if (attr->hasStroke == 2) {
 		shape->stroke.type = NSVG_PAINT_UNDEF;
+		shape->stroke.opacity = attr->strokeOpacity;
 	}
 
 	// Set flags
@@ -3184,7 +3192,7 @@ static void nsvg__createGradients(NSVGparser* p)
 				float inv[6], localBounds[4];
 				nsvg__xformInverse(inv, shape->xform);
 				nsvg__getLocalBounds(localBounds, shape, inv);
-				shape->fill.gradient = nsvg__createGradient(p, shape->fillGradient, localBounds, shape->xform, &shape->fill.type);
+				shape->fill.gradient = nsvg__createGradient(p, shape->fillGradient, localBounds, shape->xform, shape->fill.opacity, &shape->fill.type);
 			}
 			if (shape->fill.type == NSVG_PAINT_UNDEF) {
 				shape->fill.type = NSVG_PAINT_NONE;
@@ -3195,7 +3203,7 @@ static void nsvg__createGradients(NSVGparser* p)
 				float inv[6], localBounds[4];
 				nsvg__xformInverse(inv, shape->xform);
 				nsvg__getLocalBounds(localBounds, shape, inv);
-				shape->stroke.gradient = nsvg__createGradient(p, shape->strokeGradient, localBounds, shape->xform, &shape->stroke.type);
+				shape->stroke.gradient = nsvg__createGradient(p, shape->strokeGradient, localBounds, shape->xform, shape->stroke.opacity, &shape->stroke.type);
 			}
 			if (shape->stroke.type == NSVG_PAINT_UNDEF) {
 				shape->stroke.type = NSVG_PAINT_NONE;

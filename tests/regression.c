@@ -326,6 +326,80 @@ static void test_gradients(void)
 	}
 }
 
+static void test_gradient_opacity(void)
+{
+	const struct { float fill, stroke, stop, shape; int fillAlpha, strokeAlpha; } cases[] = {
+		{0, 0, 1, 1, 0, 0}, {1, 1, 1, 1, 255, 255},
+		{.25f, .5f, 1, 1, 63, 127}, {.25f, .5f, .5f, .5f, 31, 63},
+		{1, 1, 0, 1, 0, 0}, {1, 1, 1, 0, 255, 255}
+	};
+	const char* invalid[] = {"#missing", "#empty", "#broken", "#cycle", "#", ""};
+	size_t i;
+	int kind, s, stroke, j;
+	for (kind = 0; kind < 3; kind++) {
+		for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+			char svg[2048];
+			unsigned char pixels[64*64*4];
+			const char* tag = kind == 2 ? "radialGradient" : "linearGradient";
+			const char* paint = kind ? "url(#g)" : "red";
+			NSVGimage* image;
+			NSVGshape* shape;
+			// Forward references and swapped opacities catch shared-stop mutation.
+			snprintf(svg, sizeof(svg), "<svg width='64' height='64'>"
+				"<g fill='%s' stroke='%s' stroke-width='4' opacity='%g'>"
+				"<rect x='8' y='16' width='16' height='32' fill-opacity='%g' stroke-opacity='%g'/>"
+				"<rect x='40' y='16' width='16' height='32' fill-opacity='%g' stroke-opacity='%g'/></g>"
+				"<defs><%s id='g'><stop stop-color='red' stop-opacity='%g'/>"
+				"<stop offset='1' stop-color='red' stop-opacity='%g'/></%s></defs></svg>",
+				paint, paint, cases[i].shape, cases[i].fill, cases[i].stroke,
+				cases[i].stroke, cases[i].fill, tag, cases[i].stop, cases[i].stop, tag);
+			image = parse(svg);
+			render(image, pixels);
+			shape = image->shapes;
+			for (s = 0; s < 2; s++, shape = shape->next) {
+				assert(shape != NULL && shape->opacity == cases[i].shape);
+				for (stroke = 0; stroke < 2; stroke++) {
+					NSVGpaint* p = stroke ? &shape->stroke : &shape->fill;
+					int alpha = s != stroke ? cases[i].strokeAlpha : cases[i].fillAlpha;
+					int x = 8 + s*32 + (stroke ? -1 : 8);
+					if (!kind)
+						alpha = (int)((s != stroke ? cases[i].stroke : cases[i].fill)*255);
+					assert(p->type == (kind == 0 ? NSVG_PAINT_COLOR :
+						(kind == 1 ? NSVG_PAINT_LINEAR_GRADIENT : NSVG_PAINT_RADIAL_GRADIENT)));
+					if (kind) {
+						assert(p->gradient != NULL && p->gradient->nstops == 2);
+						for (j = 0; j < p->gradient->nstops; j++) {
+							assert((p->gradient->stops[j].color >> 24) == (unsigned int)alpha);
+							assert((p->gradient->stops[j].color & 0xffffff) == NSVG_RGB(255,0,0));
+						}
+					} else {
+						assert((p->color >> 24) == (unsigned int)alpha);
+					}
+					assert(pixels[(32*64+x)*4+3] == (int)(alpha*cases[i].shape));
+				}
+			}
+			assert(shape == NULL);
+			nsvgDelete(image);
+		}
+	}
+	for (i = 0; i < sizeof(invalid)/sizeof(invalid[0]); i++) {
+		char svg[1024];
+		unsigned char pixels[64*64*4];
+		NSVGimage* image;
+		snprintf(svg, sizeof(svg), "<svg width='64' height='64'><defs>"
+			"<linearGradient id='empty'/><radialGradient id='broken' xlink:href='#missing'/>"
+			"<linearGradient id='cycle' xlink:href='#cycle'/></defs>"
+			"<rect width='32' height='32' fill='url(%s)' stroke='url(%s)' fill-opacity='.25' stroke-opacity='.5'/></svg>",
+			invalid[i], invalid[i]);
+		image = parse(svg);
+		assert(image->shapes != NULL);
+		assert(image->shapes->fill.type == NSVG_PAINT_NONE && image->shapes->stroke.type == NSVG_PAINT_NONE);
+		render(image, pixels);
+		for (j = 0; j < 64*64; j++) assert(pixels[j*4+3] == 0);
+		nsvgDelete(image);
+	}
+}
+
 static void test_visibility(void)
 {
 	const struct { const char* parent; const char* child; int visible; } cases[] = {
@@ -392,6 +466,7 @@ int main(void)
 	test_transforms();
 	test_arcs();
 	test_gradients();
+	test_gradient_opacity();
 	test_visibility();
 	test_examples();
 	puts("NanoSVG regression checks passed");
