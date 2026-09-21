@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <new>
 #include <cstdio>
+#include <array>
+#include <algorithm>
 
 static int fail_after = -1;
 static bool failed = false;
@@ -47,6 +49,11 @@ static constexpr auto svg = "<svg width='32' height='32'><style>.a{stroke:blue;s
 int main() {
     int failures = 0;
     {
+    fail_after = 0; failed = false;
+    auto* handle = nsvgCreateRasterizer();
+    fail_after = -1;
+    assert(failed && handle == nullptr);
+    ++failures;
     for (int i = 0; ; ++i) {
         assert(i < 1000);
         fail_after = i; failed = false;
@@ -66,19 +73,17 @@ int main() {
         assert(!result);
         ++failures;
     }
+    const nanosvg::RasterOptions options{32, 32};
     auto image = nanosvg::parse(svg);
     assert(image);
     for (int i = 0; ; ++i) {
         assert(i < 1000);
-        auto renderer = nanosvg::create_rasterizer();
-        assert(renderer);
-        unsigned char pixels[32*32*4];
         fail_after = i; failed = false;
-        auto result = (*renderer)->rasterize(**image, pixels, 32, 32, 128);
+        auto result = nanosvg::rasterize(**image, options);
         fail_after = -1;
         if (!failed) { assert(result); break; }
         assert(!result && result.error() == nanosvg::Error::allocation_failure);
-        assert((*renderer)->rasterize(**image, pixels, 32, 32, 128));
+        assert(nanosvg::rasterize(**image, options));
         ++failures;
     }
     std::string input(svg);
@@ -88,12 +93,14 @@ int main() {
         assert(i < 1000);
         std::unique_ptr<NSVGrasterizer, decltype(&nsvgDeleteRasterizer)> renderer(nsvgCreateRasterizer(), nsvgDeleteRasterizer);
         assert(renderer);
-        unsigned char pixels[32*32*4]{};
+        std::array<unsigned char, 32*32*4> pixels;
+        pixels.fill(0xcd);
         fail_after = i; failed = false;
-        nsvgRasterize(renderer.get(), cImage.get(), 0, 0, 1, pixels, 32, 32, 128);
+        nsvgRasterize(renderer.get(), cImage.get(), 0, 0, 1, pixels.data(), 32, 32, 128);
         fail_after = -1;
         if (!failed) break;
-        nsvgRasterize(renderer.get(), cImage.get(), 0, 0, 1, pixels, 32, 32, 128);
+        assert(std::ranges::all_of(pixels, [](auto byte) { return byte == 0xcd; }));
+        nsvgRasterize(renderer.get(), cImage.get(), 0, 0, 1, pixels.data(), 32, 32, 128);
         assert(pixels[(16*32+16)*4+3] == 255);
         ++failures;
     }

@@ -12,6 +12,7 @@
 #include <climits>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <type_traits>
@@ -23,6 +24,35 @@ static_assert(std::is_same_v<decltype(GradientStop::offset), double>);
 static_assert(std::is_same_v<decltype(NSVGpath::pts), double*>);
 static_assert(!std::is_copy_constructible_v<std::unique_ptr<Image>>);
 static_assert(std::is_copy_constructible_v<Path>);
+
+static_assert(!std::is_copy_constructible_v<std::unique_ptr<RasterImage>>);
+static_assert(std::is_nothrow_move_constructible_v<std::unique_ptr<RasterImage>>);
+static_assert(std::is_same_v<decltype(rasterize(std::declval<const Image&>(), RasterOptions{})),
+                             std::expected<std::unique_ptr<RasterImage>, Error>>);
+
+static void raster_arguments() {
+    const RasterOptions defaults{};
+    assert(defaults.width == 0 && defaults.height == 0 && defaults.scale == 1);
+    assert(defaults.offset.x == 0 && defaults.offset.y == 0);
+    assert(rasterize(Image{}, {.width = -1}).error() == Error::invalid_argument);
+    assert(rasterize(Image{}, {.height = -1}).error() == Error::invalid_argument);
+    for (double bad : {0.0, -1.0, double(INFINITY), double(-INFINITY), double(NAN)}) {
+        assert(rasterize(Image{}, {.width = 2, .height = 2, .scale = bad}).error() == Error::invalid_argument);
+        assert(rasterize(Image{}, {.scale = bad}).error() == Error::invalid_argument);
+    }
+    for (double bad : {double(INFINITY), double(-INFINITY), double(NAN)}) {
+        assert(rasterize(Image{}, {.offset = {bad, 0}}).error() == Error::invalid_argument);
+        assert(rasterize(Image{}, {.offset = {0, bad}}).error() == Error::invalid_argument);
+    }
+    assert(rasterize(Image{}, {.width = 2, .height = 2, .scale = std::numeric_limits<double>::denorm_min()}));
+    assert(rasterize(Image{}, {.width = 2, .height = 2, .offset = {-1, 2}}));
+    assert(rasterize(Image{}, {INT_MAX, INT_MAX}).error() == Error::size_overflow);
+    for (auto dimensions : {std::pair{0, 0}, std::pair{0, INT_MAX}, std::pair{INT_MAX, 0}}) {
+        const auto empty = rasterize(Image{}, {dimensions.first, dimensions.second});
+        assert(empty && (*empty)->pixels.empty());
+        assert((*empty)->width == dimensions.first && (*empty)->height == dimensions.second);
+    }
+}
 
 static void precision_and_ownership() {
     auto result = parse("<svg width='1000000002' height='16'><path "
@@ -97,19 +127,32 @@ static void rendering_and_c_edits() {
     auto native = parse(svg);
     std::string mutableSvg(svg);
     std::unique_ptr<NSVGimage, decltype(&nsvgDelete)> cImage(nsvgParse(mutableSvg.data(), "px", 96), nsvgDelete);
-    auto renderer = create_rasterizer();
     std::unique_ptr<NSVGrasterizer, decltype(&nsvgDeleteRasterizer)> cRenderer(nsvgCreateRasterizer(), nsvgDeleteRasterizer);
-    assert(native && cImage && renderer && cRenderer);
+    assert(native && cImage && cRenderer);
+    const auto options = RasterOptions{32, 32};
     constexpr int stride = 32*4+7;
     constexpr std::size_t length = 31*stride+32*4;
-    std::vector<unsigned char> a(length+2, 0xcd), b(a);
-    auto nativePixels = std::span(a).subspan(1, length);
-    assert((*renderer)->rasterize(**native, nativePixels, 32, 32, stride));
-    nsvgRasterize(cRenderer.get(), cImage.get(), 0, 0, 1, b.data()+1, 32, 32, stride);
-    assert(a == b && a.front() == 0xcd && a.back() == 0xcd);
-    for (int y = 0; y < 31; ++y)
-        for (int x = 128; x < stride; ++x) assert(a[1+y*stride+x] == 0xcd);
-    const auto before = a;
+    std::vector<unsigned char> cPixels(length+2, 0xcd);
+    const auto compare_c = [&](const RasterImage& rendered) {
+        assert(rendered.width == options.width && rendered.height == options.height && rendered.pixels.size() == 32*32);
+        nsvgRasterize(cRenderer.get(), cImage.get(), 0, 0, 1, cPixels.data()+1, 32, 32, stride);
+        for (int y = 0; y < 32; ++y) {
+            assert(std::memcmp(cPixels.data()+1+y*stride, rendered.pixels.data()+y*32, 128) == 0);
+            if (y < 31) for (int x = 128; x < stride; ++x) assert(cPixels[1+y*stride+x] == 0xcd);
+        }
+        assert(cPixels.front() == 0xcd && cPixels.back() == 0xcd);
+    };
+    auto first = rasterize(**native, options);
+    assert(first);
+    compare_c(**first);
+    const auto before = (*first)->pixels;
+    auto unrelated = rasterize(Image{}, RasterOptions{3, 7});
+    auto repeat = rasterize(**native, options);
+    assert(unrelated && repeat && (*repeat)->pixels == before);
+    assert((*repeat)->pixels.data() != (*first)->pixels.data());
+    auto owned = std::move(*first);
+    assert(!*first && owned->pixels == before);
+
     auto& shape = (*native)->shapes.front();
     shape.fill = Color(0xff00ff00);
     cImage->shapes->fill.color = 0xff00ff00;
@@ -118,26 +161,13 @@ static void rendering_and_c_edits() {
     for (int i = 0; i < cPath->npts; ++i) cPath->pts[i*2] += 10;
     std::get<Gradient>((*native)->shapes[1].fill).stops[0].color = 0xff00ff00;
     cImage->shapes->next->fill.gradient->stops[0].color = 0xff00ff00;
-    assert((*renderer)->rasterize(**native, nativePixels, 32, 32, stride));
-    nsvgRasterize(cRenderer.get(), cImage.get(), 0, 0, 1, b.data()+1, 32, 32, stride);
-    assert(a == b && a != before);
-
-    auto unchanged = a;
-    auto bad = (*renderer)->rasterize(**native, nativePixels.first(8), 32, 32, stride);
-    assert(!bad && bad.error() == Error::invalid_argument && a == unchanged);
-    assert(!(*renderer)->rasterize(**native, nativePixels, 32, 32, 127));
-    assert(!(*renderer)->rasterize(**native, nativePixels, -1, 32, stride));
-    assert(!(*renderer)->rasterize(**native, nativePixels, 32, 32, stride, 0, 0, 0));
-    assert(!(*renderer)->rasterize(**native, nativePixels, 32, 32, stride, NAN));
-    assert(!(*renderer)->rasterize(**native, nativePixels, INT_MAX, INT_MAX, INT_MAX));
-    assert((*renderer)->rasterize(**native, {}, 0, 32, 0));
-    assert(a == unchanged);
-    (*native)->shapes.front().paths.front().points.pop_back();
-    assert(!(*renderer)->rasterize(**native, nativePixels, 32, 32, stride) && a == unchanged);
-    Rasterizer moved = std::move(**renderer);
-    assert(!(*renderer)->rasterize(Image{}, nativePixels, 32, 32, stride));
-    assert(moved.rasterize(Image{}, nativePixels, 32, 32, stride));
-    assert(a.front() == 0xcd && a.back() == 0xcd);
+    auto changed = rasterize(**native, options);
+    assert(changed && (*changed)->pixels != before && owned->pixels == before);
+    compare_c(**changed);
+    shape.paths.front().points.pop_back();
+    assert(rasterize(**native, options).error() == Error::invalid_argument);
+    native->reset();
+    assert(owned->pixels == before && (*repeat)->pixels == before);
 }
 
 static void long_graph() {
@@ -226,27 +256,31 @@ static void retained_data_lifetimes() {
     a.stops[0].color = 0xff00ff00;
     assert(std::get<Gradient>(copy.shapes[0].fill).stops[0].color == 0xff0000ff);
     retained.reset();
-    auto renderer = create_rasterizer();
-    std::array<unsigned char, 32*32*4> pixels{};
     const auto before = copy.shapes[0].paths[0];
-    assert(renderer && (*renderer)->rasterize(copy, pixels, 32, 32, 128));
+    const auto paintBefore = std::get<Gradient>(copy.shapes[0].fill);
+    assert(rasterize(copy, RasterOptions{32, 32, {3, 4}, .5}));
     assert(copy.shapes[0].paths[0].bounds == before.bounds);
     for (std::size_t i = 0; i < before.points.size(); ++i) {
         assert(copy.shapes[0].paths[0].points[i].x == before.points[i].x);
         assert(copy.shapes[0].paths[0].points[i].y == before.points[i].y);
+    }
+    const auto& paintAfter = std::get<Gradient>(copy.shapes[0].fill);
+    assert(paintAfter.xform == paintBefore.xform && paintAfter.stops.size() == paintBefore.stops.size());
+    for (std::size_t i = 0; i < paintBefore.stops.size(); ++i) {
+        assert(paintAfter.stops[i].offset == paintBefore.stops[i].offset);
+        assert(paintAfter.stops[i].color == paintBefore.stops[i].color);
     }
 }
 
 static void invalid_edited_enums() {
     auto image = parse("<svg width='2' height='2'><defs><linearGradient id='g'><stop stop-color='red'/></linearGradient></defs>"
         "<rect width='2' height='2' fill='url(#g)'/></svg>");
-    auto renderer = create_rasterizer();
-    assert(image && renderer);
+    assert(image);
     std::array<unsigned char, 16> pixels;
     pixels.fill(0xcd);
     const auto untouched = pixels;
     const auto rejected = [&] {
-        const auto result = (*renderer)->rasterize(**image, pixels, 2, 2, 8);
+        const auto result = rasterize(**image, RasterOptions{2, 2});
         assert(!result && result.error() == Error::invalid_argument && pixels == untouched);
     };
     auto& shape = (*image)->shapes[0];
@@ -257,7 +291,7 @@ static void invalid_edited_enums() {
     auto& gradient = std::get<Gradient>(shape.fill);
     gradient.kind = static_cast<GradientKind>(0); rejected(); gradient.kind = GradientKind::linear;
     gradient.spread = static_cast<Spread>(99); rejected(); gradient.spread = Spread::pad;
-    assert((*renderer)->rasterize(**image, pixels, 2, 2, 8));
+    assert(rasterize(**image, RasterOptions{2, 2}));
 
     std::string text = "<svg width='2' height='2'><rect width='2' height='2' fill='red'/></svg>";
     std::unique_ptr<NSVGimage, decltype(&nsvgDelete)> cImage(nsvgParse(text.data(), "px", 96), nsvgDelete);
@@ -274,6 +308,7 @@ static void invalid_edited_enums() {
 
 int main(int argc, char** argv) {
     assert(argc == 2);
+    raster_arguments();
     typed_units_and_tokens(argv[1]);
     retained_data_lifetimes();
     invalid_edited_enums();

@@ -33,14 +33,13 @@ cat > "$tmp/raster.cpp" <<'EOF'
 #include "nanosvgrast.hpp"
 #include <cassert>
 void render(const nanosvg::Image& image) {
-    auto rasterizer = nanosvg::create_rasterizer();
-    assert(rasterizer);
-    std::array<unsigned char, 16> pixels{};
-    assert((*rasterizer)->rasterize(image, pixels, 2, 2, 8));
-    for (int i = 0; i < 16; i += 4) {
-        assert(pixels[i] == (image.shapes.empty() ? 0 : 255));
-        assert(pixels[i+1] == 0 && pixels[i+2] == 0);
-        assert(pixels[i+3] == (image.shapes.empty() ? 0 : 255));
+    const nanosvg::RasterOptions options{2, 2};
+    auto rendered = nanosvg::rasterize(image, options);
+    assert(rendered && (*rendered)->pixels.size() == 4);
+    for (const auto pixel : (*rendered)->pixels) {
+        assert(pixel.r == (image.shapes.empty() ? 0 : 255));
+        assert(pixel.g == 0 && pixel.b == 0);
+        assert(pixel.a == (image.shapes.empty() ? 0 : 255));
     }
 }
 #ifdef TEST_RASTER_ONLY

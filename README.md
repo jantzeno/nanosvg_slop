@@ -1,4 +1,6 @@
-# NanoSVG 2
+# NanoSVG 2: Rise of the Slop
+
+**BREAKING CHANGES**
 
 A native C++23 SVG parser and rasterizer derived from NanoSVG. Floating-point
 geometry and calculations use `double`; native objects use smart pointers and
@@ -22,18 +24,16 @@ default is `px` at 96 DPI. The rasterizer produces straight-alpha RGBA bytes.
 #define NANOSVG_IMPLEMENTATION
 #define NANOSVGRAST_IMPLEMENTATION
 #include <nanosvgrast.hpp>
-#include <vector>
+#include <utility>
 
 int main() {
     auto image = nanosvg::parse_file("icon.svg");
     if (!image) return 1;
-    auto rasterizer = nanosvg::create_rasterizer();
-    if (!rasterizer) return 1;
 
-    constexpr int width = 64, height = 64, stride = width * 4;
-    std::vector<unsigned char> pixels(height * stride);
-    auto result = (*rasterizer)->rasterize(**image, pixels, width, height, stride);
-    return result ? 0 : 1;
+    auto result = nanosvg::rasterize(**image, {.width = 64, .height = 64});
+    if (!result) return 1;
+    auto pixels = std::move(*result); // unique_ptr<RasterImage>; result now holds a null pointer.
+    return pixels->pixels.size() == 64*64 ? 0 : 1;
 }
 ```
 
@@ -68,20 +68,44 @@ The image remains freely editable: callers must maintain relationships such
 as points and cached bounds when changing fields. Rendering validates geometry
 and enum values before writing pixels and does not modify the image.
 
-Parsing, file loading, rasterizer creation, and rendering return
-`std::expected` with `Error::invalid_argument`, `io_error`,
-`allocation_failure`, or `size_overflow`. Direct construction of a
-`Rasterizer` and ordinary container copies can throw standard allocation
-exceptions. Moved-from rasterizers reject rendering; moved-to objects remain
-usable. Each rasterizer can be reused sequentially but is not safe for
-concurrent calls.
+Parsing, file loading, and rendering return `std::expected` with
+`Error::invalid_argument`, `io_error`, `allocation_failure`, or `size_overflow`.
+Ordinary container copies can still throw standard allocation exceptions.
 
-Rendering preserves the image and row padding. Dimensions and stride must be
-nonnegative; scale must be finite and positive, and translation must be finite.
-The destination must hold `(height - 1) * stride + width * 4` bytes for nonempty
-output. Zero width or height is a successful no-op. Invalid arguments leave
-the destination untouched; allocation failures may leave partial output, but
-the rasterizer remains reusable.
+Rendering uses `rasterize(const Image&, const RasterOptions&)` and returns
+`std::unique_ptr<RasterImage>`. This replaces the public `Rasterizer` class,
+`create_rasterizer()`, and the native destination-buffer overload during 2.0.0
+development. Each call owns its working state; geometry, paint, and pixel
+calculation helpers return values. Inputs remain unchanged, results are
+independent, and concurrent calls may share an image that is not being edited.
+Moving the returned smart pointer transfers ownership without copying pixels.
+
+`RasterOptions` is a value struct with `int width`, `int height`, `Point offset`,
+and `double scale` fields. `rasterize()` validates these together: dimensions
+must be nonnegative, offsets finite, and scale finite and positive. Defaults
+are zero dimensions, zero offset, and unit scale. Combined allocation sizes
+are checked before rendering; zero width or height succeeds with an owned
+empty image after argument validation.
+
+`RasterImage` contains integer `width` and `height` fields and an owning
+`std::vector<Rgba8> pixels`. Rows are tightly packed; each pixel has `r`, `g`,
+`b`, and `a` byte members in straight-alpha RGBA order. The result owns no
+references into the input image. As with parsed images, callers can edit
+returned values and must maintain their relationships when doing so.
+
+The C API retains its signatures and handles. Each call renders an owned
+image, then copies successful rows to the supplied destination. Invalid
+arguments and allocation failures leave the entire destination unchanged;
+row padding is preserved. This entails a per-call output allocation and row
+copy. Dimensions and stride must be nonnegative; a nonempty destination must
+hold `(height - 1) * stride + width * 4` bytes. No exception crosses the C API.
+
+The rasterizer uses `std::hypot` for vector normalization and dash lengths,
+`std::midpoint` for subdivision and closed-stroke midpoints, and `std::round`
+for fixed-point conversion. These avoid intermediate overflow and correct
+rounding immediately below half-integers; floating-point boundaries can differ
+from the previous implementation. Normalization thresholds, saturation,
+nonfinite fallbacks, tessellation limits, and the dash budget remain in place.
 
 SVG parsing remains permissive. Empty input succeeds, and unsupported or
 malformed SVG may produce an empty or partial image. A successful parse is

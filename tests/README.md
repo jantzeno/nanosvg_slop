@@ -20,8 +20,9 @@ runner.
 On Linux, `failures.cpp` also overrides C++ allocation and wraps C `calloc`
 and `free` with the linker's `--wrap` option. It fails each allocation in native parsing,
 C graph export, native rendering, and C rendering, checks error results, and
-verifies renderer reuse. Allocation counts must return to zero after cleanup,
-including when LeakSanitizer cannot run under tracing.
+verifies subsequent calls and unchanged C destinations on failure. Allocation
+counts must return to zero after cleanup, including when LeakSanitizer cannot
+run under tracing.
 
 ```sh
 CC=clang CXX=clang++ sh tests/all.sh
@@ -35,18 +36,20 @@ consumer matrix, and runs Xmake checks when Xmake is installed.
 | Geometry | Primitives; absolute/relative path commands; smooth and quadratic curves; arcs; closure; tight bounds; degeneracies |
 | Coordinates | Physical/font units; DPI; output units; viewBox percentages and alignment; inferred dimensions; nested transforms |
 | Paint | Colors; opacity; class/inline styles; inheritance; visibility; paint order; linear/radial gradients and references |
-| Rendering | Fill rules; caps/joins; miter fallback; dashes; antialiasing; blending; translation/scaling/clipping; reuse; padded strides; unchanged geometry |
-| Native API | Double precision beyond float range/resolution; long decimals; variant gradients; unique ownership; deep path copies; string-view lifetime; file/error results; invalid buffers; moved rasterizers |
+| Rendering | Fill rules; caps/joins; miter fallback; dashes; antialiasing; blending; translation/scaling/clipping; independent calls; padded C strides; unchanged geometry |
+| Native API | Double precision beyond float range/resolution; long decimals; variant gradients; unique ownership; deep path copies; string-view lifetime; file/error results; checked raster arguments; moved output ownership |
 | C adapter | Independent C graph ownership; malloc/free-compatible path copies; C/native output agreement; caller edits to geometry and gradient stops; long graph destruction |
 | Failures | Malformed/truncated input; numeric overflow and nonfinite values; singular transforms; CSS/gradient cycles; allocation failure and recovery |
 
 `functional.c` exercises public C behavior through the adapter. Its numeric
-fields and helpers now use double. `native.cpp` exercises the native API and
-checks adapter parity. `regression.cpp` additionally enables the native header
-implementations to test pure numerical and token helpers; those helpers are
-not a supported interface. Parser state remains private, with arc regressions
-exercised through the public API. The three existing SVG examples remain
-smoke-test inputs.
+fields and helpers now use double. `native.cpp` exercises the owning native API,
+raster argument validation, output lifetimes, and C adapter parity. Compile-time
+assertions check incompatible internal coordinate types and move-only output
+ownership. `regression.cpp` additionally enables the native header
+implementations to test pure numerical and token helpers; those helpers are not
+a supported interface. Parser state remains private, with arc regressions
+exercised through the public API. The three existing SVG examples remain smoke
+test inputs.
 
 Native checks cover typed and string output units, numeric tokens longer than
 63 characters, CSS gradient references longer than 511 characters, finite
@@ -104,3 +107,22 @@ omitted focal coordinates, invalid caller edits, and C/native output agreement.
 Explicit inheritance checks cover line caps, joins, fill rules, and paint order,
 including child overrides followed by `inherit`. Full CSS/gradient-reference
 inheritance remains outside the feature set.
+
+## Owning rasterizer migration
+
+The native rasterizer now returns `expected<unique_ptr<RasterImage>, Error>`
+from `rasterize(image, options)`. Tests exercise `RasterOptions` validation
+(including invalid arguments with empty dimensions), combined allocation-size
+overflow, zero-sized results, independent/interleaved calls, moved ownership,
+and output lifetime after input destruction. Padded destination and sentinel
+checks remain on the C adapter; every injected rendering failure must leave
+its destination untouched. Header and packaging consumers use the new API;
+the declared development version remains 2.0.0.
+
+Private helper checks cover pure normalization, closed-stroke endpoints,
+fixed-point advancement, paint preparation, and all 65,536 opacity/coverage
+combinations against an integer-division blend oracle. Numerical checks include
+neighbors of half-integers, overflowing squared vector lengths, overflowing
+true lengths, tiny/zero directions, and nonfinite conversions. `std::hypot`,
+`std::midpoint`, and `std::round` intentionally improve those boundaries;
+existing ordinary rendering expectations and pixel tolerances remain unchanged.

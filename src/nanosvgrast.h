@@ -53,7 +53,7 @@ typedef struct NSVGrasterizer NSVGrasterizer;
 	nsvgRasterize(rast, image, 0,0,1, img, w, h, w*4);
 */
 
-// Allocated rasterizer context.
+// Allocated compatibility handle; renders use independent working state.
 NSVGrasterizer* nsvgCreateRasterizer(void);
 
 // Rasterizes SVG image, returns RGBA image (non-premultiplied alpha)
@@ -65,6 +65,7 @@ NSVGrasterizer* nsvgCreateRasterizer(void);
 //   w - width of the image to render
 //   h - height of the image to render
 //   stride - number of bytes per scaleline in the destination buffer
+// Errors leave dst unchanged. Successful renders preserve row padding.
 void nsvgRasterize(NSVGrasterizer* r,
 				   NSVGimage* image, double tx, double ty, double scale,
 				   unsigned char* dst, int w, int h, int stride);
@@ -85,17 +86,15 @@ void nsvgDeleteRasterizer(NSVGrasterizer*);
 #else
 
 #include "nanosvgrast.hpp"
+#include <cstring>
 
-struct NSVGrasterizer { std::unique_ptr<nanosvg::Rasterizer> renderer; };
+// Compatibility handle only; every render owns its own working state.
+struct NSVGrasterizer {};
 
 extern "C" {
 NSVGrasterizer* nsvgCreateRasterizer(void) {
     try {
-        auto renderer = nanosvg::create_rasterizer();
-        if (!renderer) return nullptr;
-        auto result = std::make_unique<NSVGrasterizer>();
-        result->renderer = std::move(*renderer);
-        return result.release();
+        return std::make_unique<NSVGrasterizer>().release();
     } catch (...) { return nullptr; }
 }
 void nsvgDeleteRasterizer(NSVGrasterizer* rasterizer) { delete rasterizer; }
@@ -109,7 +108,14 @@ void nsvgRasterize(NSVGrasterizer* rasterizer, NSVGimage* image, double tx, doub
         // ponytail: copy per C call so caller edits are visible; a versioned C
         // image API would be needed before caching conversions safely.
         auto native = nanosvg::c_api::import_image(*image);
-        (void)rasterizer->renderer->rasterize(native, {dst, *size}, width, height, stride, tx, ty, scale);
+        auto rendered = nanosvg::rasterize(native, {width, height, {tx, ty}, scale});
+        if (!rendered) return;
+        // Commit only after all allocations and rendering succeed; preserve row padding.
+        const auto rowPixels = static_cast<std::size_t>(width);
+        for (int row = 0; row < height; ++row)
+            std::memcpy(dst + static_cast<std::size_t>(row)*stride,
+                        (*rendered)->pixels.data() + static_cast<std::size_t>(row)*rowPixels,
+                        rowPixels*sizeof(nanosvg::Rgba8));
     } catch (...) { }
 }
 }

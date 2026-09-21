@@ -7,6 +7,8 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include <climits>
+#include <type_traits>
 
 // Compile the single-header implementations to exercise private helpers.
 #define NANOSVG_IMPLEMENTATION
@@ -14,6 +16,11 @@
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "nanosvgrast.hpp"
+
+static_assert(!std::is_convertible_v<nanosvg::detail::FixedX, nanosvg::detail::FixedStep>);
+static_assert(!std::is_convertible_v<nanosvg::detail::FixedStep, nanosvg::detail::FixedX>);
+static_assert(!std::is_convertible_v<nanosvg::Point, nanosvg::detail::Direction>);
+static_assert(!std::is_convertible_v<nanosvg::detail::EdgeWinding, int>);
 
 static NSVGimage* parse(const char* svg)
 {
@@ -132,27 +139,52 @@ static void test_numeric(void)
 	double aboveMin = nextafter((double)INT_MIN, 0);
 	size_t i;
 	NSVGimage* image;
-	assert(nanosvg::detail::nsvg__roundf_clamp(NAN) == 0);
-	assert(nanosvg::detail::nsvg__roundf_clamp(INFINITY) == INT_MAX);
-	assert(nanosvg::detail::nsvg__roundf_clamp(-INFINITY) == INT_MIN);
-	assert(nanosvg::detail::nsvg__roundf_clamp(DBL_MAX) == INT_MAX);
-	assert(nanosvg::detail::nsvg__roundf_clamp(-DBL_MAX) == INT_MIN);
-	assert(nanosvg::detail::nsvg__roundf_clamp((double)INT_MAX) == INT_MAX);
-	assert(nanosvg::detail::nsvg__roundf_clamp((double)INT_MIN) == INT_MIN);
-	assert(nanosvg::detail::nsvg__roundf_clamp(belowMax) == INT_MAX);
-	assert(nanosvg::detail::nsvg__roundf_clamp(aboveMin) == INT_MIN);
-	assert(nanosvg::detail::nsvg__roundf_clamp(1.5) == 2 && nanosvg::detail::nsvg__roundf_clamp(-1.5) == -2);
-	assert(nanosvg::detail::nsvg__iadd_sat(INT_MAX, 1) == INT_MAX);
-	assert(nanosvg::detail::nsvg__iadd_sat(INT_MIN, -1) == INT_MIN);
-	assert(nanosvg::detail::nsvg__iadd_sat(INT_MAX, INT_MAX) == INT_MAX);
-	assert(nanosvg::detail::nsvg__iadd_sat(INT_MIN, INT_MIN) == INT_MIN);
-	assert(nanosvg::detail::nsvg__iadd_sat(INT_MAX, INT_MIN) == -1);
-	assert(nanosvg::detail::nsvg__iadd_sat(10, -20) == -10);
-	assert(nanosvg::detail::nsvg__curveDivs(1, std::numbers::pi, 0.25) == 3);
-	assert(nanosvg::detail::nsvg__curveDivs(DBL_MAX, std::numbers::pi, 0.25) == 2);
+	assert(nanosvg::detail::round_clamped(NAN) == 0);
+	assert(nanosvg::detail::round_clamped(INFINITY) == INT_MAX);
+	assert(nanosvg::detail::round_clamped(-INFINITY) == INT_MIN);
+	assert(nanosvg::detail::round_clamped(DBL_MAX) == INT_MAX);
+	assert(nanosvg::detail::round_clamped(-DBL_MAX) == INT_MIN);
+	assert(nanosvg::detail::round_clamped((double)INT_MAX) == INT_MAX);
+	assert(nanosvg::detail::round_clamped((double)INT_MIN) == INT_MIN);
+	assert(nanosvg::detail::round_clamped(belowMax) == INT_MAX);
+	assert(nanosvg::detail::round_clamped(aboveMin) == INT_MIN);
+	assert(nanosvg::detail::round_clamped(1.5) == 2 && nanosvg::detail::round_clamped(-1.5) == -2);
+	assert(nanosvg::detail::add_saturated(INT_MAX, 1) == INT_MAX);
+	assert(nanosvg::detail::add_saturated(INT_MIN, -1) == INT_MIN);
+	assert(nanosvg::detail::add_saturated(INT_MAX, INT_MAX) == INT_MAX);
+	assert(nanosvg::detail::add_saturated(INT_MIN, INT_MIN) == INT_MIN);
+	assert(nanosvg::detail::add_saturated(INT_MAX, INT_MIN) == -1);
+	assert(nanosvg::detail::add_saturated(10, -20) == -10);
+    for (double sign : {-1.0, 1.0}) {
+        assert(nanosvg::detail::round_clamped(sign*std::nextafter(.5, 0.0)) == 0);
+        assert(nanosvg::detail::round_clamped(sign*.5) == sign);
+        assert(nanosvg::detail::round_clamped(sign*std::nextafter(.5, 1.0)) == sign);
+    }
+    const nanosvg::detail::Direction input{3e200, 4e200};
+    const auto normalized = nanosvg::detail::normalize(input);
+    assert(input.x == 3e200 && input.y == 4e200);
+    assert(std::abs(normalized.length/5e200 - 1) < 1e-15);
+    assert(std::abs(normalized.direction.x - .6) < 1e-15 && std::abs(normalized.direction.y - .8) < 1e-15);
+    const auto largest = nanosvg::detail::normalize({DBL_MAX, DBL_MAX});
+    assert(std::isinf(largest.length) && std::abs(std::hypot(largest.direction.x, largest.direction.y) - 1) < 1e-15);
+    const auto zero = nanosvg::detail::normalize({});
+    assert(zero.length == 0 && zero.direction == nanosvg::detail::Direction{});
+    const nanosvg::detail::Direction tiny{1e-8, 0};
+    assert(nanosvg::detail::normalize(tiny).direction == tiny);
+    const nanosvg::Point first{DBL_MAX*.75, 2}, second{DBL_MAX, 2};
+    const auto sides = nanosvg::detail::closed_sides(first, second, 2);
+    assert(first.x == DBL_MAX*.75 && second.x == DBL_MAX);
+    assert(std::isfinite(sides.left.x) && sides.left.x == sides.right.x);
+    assert(sides.left.y == 3 && sides.right.y == 1);
+    const nanosvg::detail::FixedX position{INT_MAX};
+    const nanosvg::detail::FixedStep increment{1};
+    assert(nanosvg::detail::advance(position, increment).value == INT_MAX);
+    assert(position.value == INT_MAX && increment.value == 1);
+	assert(nanosvg::detail::curve_divisions(1, std::numbers::pi, 0.25) == 3);
+	assert(nanosvg::detail::curve_divisions(DBL_MAX, std::numbers::pi, 0.25) == 2);
 	for (i = 0; i < sizeof(special)/sizeof(special[0]); i++) {
-		assert(nanosvg::detail::nsvg__curveDivs(special[i], std::numbers::pi, 0.25) == 2);
-		assert(nanosvg::detail::nsvg__curveDivs(1, special[i], 0.25) == 2);
+		assert(nanosvg::detail::curve_divisions(special[i], std::numbers::pi, 0.25) == 2);
+		assert(nanosvg::detail::curve_divisions(1, special[i], 0.25) == 2);
 	}
 	for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
 		image = parse(cases[i]);
@@ -394,12 +426,14 @@ static void test_gradient_rendering() {
                 (transformed ? "<g transform='translate(4 6) scale(2)'>" + geometry + "</g>" : geometry) + "</svg>";
             auto image = nanosvg::parse(svg);
             assert(image);
-            Rasterizer renderer;
             constexpr int stride = 160*4 + 7;
             std::vector<unsigned char> pixels(160*stride, 0xcd), cPixels(pixels);
             const double scale = transformed ? .5 : 1;
             const double tx = transformed ? 7 : 0, ty = transformed ? 9 : 0;
-            assert(renderer.rasterize(**image, pixels, 160, 160, stride, tx, ty, scale));
+            const auto rendered = rasterize(**image, RasterOptions{160, 160, {tx, ty}, scale});
+            assert(rendered);
+            for (int row = 0; row < 160; ++row)
+                std::memcpy(pixels.data()+row*stride, (*rendered)->pixels.data()+row*160, 160*sizeof(Rgba8));
             auto cImage = parse(svg.c_str());
             auto cRenderer = nsvgCreateRasterizer();
             assert(cRenderer);
@@ -428,25 +462,27 @@ static void test_gradient_rendering() {
 static void test_gradient_sampling_limits() {
     using namespace nanosvg;
     using namespace nanosvg::detail;
-    // Check the gradient blend fast paths against the existing solid-paint path.
-    CachedPaint solid{};
-    solid.type = PaintKind::color;
+    // Independent integer-division oracle for every opacity/coverage combination.
     for (unsigned alpha = 0; alpha < 256; ++alpha) for (unsigned cover = 0; cover < 256; ++cover) {
-        solid.colors[0] = (alpha << 24) | 0x00cb5b11;
-        std::array<unsigned char, 4> expected{20, 40, 60, 80}, actual = expected;
-        auto coverage = static_cast<unsigned char>(cover);
-        nsvg__scanlineSolid(expected.data(), 1, &coverage, 0, 0, 0, 0, 1, &solid);
-        nsvg__blendPixel(actual.data(), coverage, solid.colors[0]);
-        assert(actual == expected);
+        const Rgba8 source{17, 91, 203, static_cast<std::uint8_t>(alpha)}, destination{20, 40, 60, 80};
+        const unsigned effective = cover*alpha/255, inverse = 255-effective;
+        const Rgba8 expected{
+            static_cast<std::uint8_t>(17*effective/255 + 20*inverse/255),
+            static_cast<std::uint8_t>(91*effective/255 + 40*inverse/255),
+            static_cast<std::uint8_t>(203*effective/255 + 60*inverse/255),
+            static_cast<std::uint8_t>(effective + 80*inverse/255)};
+        assert(blend_pixel(destination, static_cast<std::uint8_t>(cover), source) == expected);
+        assert((destination == Rgba8{20, 40, 60, 80}));
+        assert(source.a == alpha && source.r == 17 && source.g == 91 && source.b == 203);
     }
-    assert(nsvg__gradientIndex(-.25, Spread::repeat) == 191);
-    assert(nsvg__gradientIndex(-.25, Spread::reflect) == 63);
-    assert(nsvg__gradientIndex(1, Spread::repeat) == 0);
-    assert(nsvg__gradientIndex(1, Spread::reflect) == 255);
+    assert(gradient_index(-.25, Spread::repeat) == 191);
+    assert(gradient_index(-.25, Spread::reflect) == 63);
+    assert(gradient_index(1, Spread::repeat) == 0);
+    assert(gradient_index(1, Spread::reflect) == 255);
     for (Spread spread : {Spread::pad, Spread::reflect, Spread::repeat}) {
-        assert(nsvg__gradientIndex(INFINITY, spread) == 255);
-        assert(nsvg__gradientIndex(-INFINITY, spread) == 0);
-        assert(nsvg__gradientIndex(NAN, spread) == 0);
+        assert(gradient_index(INFINITY, spread) == 255);
+        assert(gradient_index(-INFINITY, spread) == 0);
+        assert(gradient_index(NAN, spread) == 0);
     }
     Gradient gradient;
     gradient.kind = GradientKind::radial;
@@ -454,27 +490,26 @@ static void test_gradient_sampling_limits() {
     for (double focus : {0.0, .5, 1 - 1e-12, 1.0, 2.0, DBL_MAX}) {
         gradient.fx = focus;
         Paint paint = gradient;
-        CachedPaint cache{};
-        nsvg__initPaint(&cache, &paint, 1);
-        assert(nsvg__radialDistance(cache.fx, cache.fy, &cache) == 0);
-        assert(std::abs(nsvg__radialDistance(-1, 0, &cache) - 1) < 1e-12);
-        assert(std::abs(nsvg__radialDistance(0, 0, &cache) - cache.fx/(1 + cache.fx)) < 1e-12);
-        if (focus < 1) assert(std::abs(nsvg__radialDistance(1, 0, &cache) - 1) < 1e-12);
-        else assert(std::isinf(nsvg__radialDistance(2, 0, &cache)));
+        const auto cache = std::get<RadialPaint>(make_paint(paint, 1));
+        assert(std::get<Gradient>(paint).fx == focus);
+        assert(radial_distance(cache.focus, cache) == 0);
+        assert(std::abs(radial_distance({-1, 0}, cache) - 1) < 1e-12);
+        assert(std::abs(radial_distance({0, 0}, cache) - cache.focus.x/(1 + cache.focus.x)) < 1e-12);
+        if (focus < 1) assert(std::abs(radial_distance({1, 0}, cache) - 1) < 1e-12);
+        else assert(std::isinf(radial_distance({2, 0}, cache)));
     }
     gradient.fx = gradient.fy = DBL_MAX;
     Paint paint = gradient;
-    CachedPaint cache{};
-    nsvg__initPaint(&cache, &paint, 1);
-    assert(std::abs(std::hypot(cache.fx, cache.fy) - 1) < 1e-12);
+    auto cache = std::get<RadialPaint>(make_paint(paint, 1));
+    assert(std::abs(std::hypot(cache.focus.x, cache.focus.y) - 1) < 1e-12);
     gradient.fx = .3;
     gradient.fy = -.4;
     paint = gradient;
-    nsvg__initPaint(&cache, &paint, 1);
+    cache = std::get<RadialPaint>(make_paint(paint, 1));
     for (double angle : {0.0, .7, 1.5, 3.0, 5.0}) for (double t : {.2, 1.0, 1.5}) {
         const double x = (1-t)*gradient.fx + t*std::cos(angle);
         const double y = (1-t)*gradient.fy + t*std::sin(angle);
-        assert(std::abs(nsvg__radialDistance(x, y, &cache) - t) < 1e-12);
+        assert(std::abs(radial_distance({x, y}, cache) - t) < 1e-12);
     }
 
     // Many short periods expose accumulation drift at repeat boundaries.
@@ -482,24 +517,25 @@ static void test_gradient_sampling_limits() {
     gradient.fx = gradient.fy = 0;
     gradient.spread = Spread::repeat;
     gradient.xform = {0, .1, 0, 0, 0, 0};
-    paint = gradient;
-    nsvg__initPaint(&cache, &paint, 1);
-    std::vector<unsigned char> pixels(40000), coverage(10000, 255);
-    nsvg__scanlineSolid(pixels.data(), 10000, coverage.data(), 0, 0, 0, 0, 1, &cache);
-    for (int x = 0; x < 10000; x += 10) assert(pixels[x*4] == 255 && pixels[x*4+2] == 0);
+    auto longImage = nanosvg::parse("<svg width='10000' height='1'><rect width='10000' height='1'/></svg>");
+    assert(longImage);
+    (*longImage)->shapes.front().fill = gradient;
+    const auto longOutput = rasterize(**longImage, RasterOptions{10000, 1});
+    assert(longOutput);
+    for (int x = 0; x < 10000; x += 10)
+        assert((*longOutput)->pixels[x].r == 255 && (*longOutput)->pixels[x].b == 0);
 
     const char* svg = "<svg><defs><radialGradient id='g'><stop stop-color='red'/></radialGradient></defs>"
         "<rect width='2' height='2' fill='url(#g)'/></svg>";
     auto image = nanosvg::parse(svg);
     assert(image);
-    Rasterizer renderer;
     std::array<unsigned char, 16> output;
     output.fill(0xcd);
     const auto untouched = output;
     auto& edited = std::get<Gradient>((*image)->shapes[0].fill);
     for (double value : {NAN, INFINITY, -INFINITY}) for (double* coord : {&edited.fx, &edited.fy}) {
         *coord = value;
-        auto result = renderer.rasterize(**image, output, 2, 2, 8);
+        auto result = rasterize(**image, RasterOptions{2, 2});
         assert(!result && result.error() == Error::invalid_argument && output == untouched);
         *coord = 0;
     }
