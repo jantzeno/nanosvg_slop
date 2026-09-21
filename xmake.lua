@@ -1,0 +1,27 @@
+set_project("NanoSVG")
+set_version("1.0")
+set_languages("c99")
+add_rules("mode.debug", "mode.release")
+
+target("nanosvg")
+    set_kind("$(kind)")
+    set_configdir("$(builddir)/nanosvg")
+    add_configfiles("src/nanosvg.h", {filename = "nanosvg.c", onlycopy = true})
+    add_files("$(builddir)/nanosvg/nanosvg.c", {always_added = true})
+    add_defines("NANOSVG_IMPLEMENTATION")
+    add_includedirs("src", {public = true})
+    add_headerfiles("src/nanosvg.h", {prefixdir = "nanosvg"})
+    if is_plat("linux", "bsd", "android", "mingw") then
+        add_syslinks("m", {public = true})
+    end
+target_end()
+
+target("nanosvgrast")
+    set_kind("$(kind)")
+    set_configdir("$(builddir)/nanosvg")
+    add_configfiles("src/nanosvgrast.h", {filename = "nanosvgrast.c", onlycopy = true})
+    add_files("$(builddir)/nanosvg/nanosvgrast.c", {always_added = true})
+    add_defines("NANOSVGRAST_IMPLEMENTATION")
+    add_deps("nanosvg")
+    add_headerfiles("src/nanosvgrast.h", {prefixdir = "nanosvg"})
+target_end()

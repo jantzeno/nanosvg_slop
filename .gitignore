@@ -23,6 +23,7 @@ Thumbs.db
 
 ## Build dir
 build/*
+.xmake/
 
 ## Stuff in example
 example/_*

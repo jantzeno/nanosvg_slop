@@ -88,6 +88,19 @@ find_package(NanoSVG REQUIRED)
 target_link_libraries(myexe NanoSVG::nanosvg NanoSVG::nanosvgrast)
 ```
 
+You can also build and install both libraries with Xmake:
+
+```sh
+xmake                         # static libraries, Release mode
+xmake f -m debug -k shared     # select Debug mode and shared libraries
+xmake
+xmake install -o /path/to/prefix
+```
+
+Headers are installed under `include/nanosvg`. Xmake projects can use
+`includes("path/to/nanosvg")` and `add_deps("nanosvgrast")` to inherit the
+parser dependency and include directory, or depend on `nanosvg` alone.
+
 ## Compiling Example Project
 
 In order to compile the demo project, your will need to install [GLFW](http://www.glfw.org/) to compile.
