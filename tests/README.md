@@ -10,7 +10,8 @@ Leak detection defaults to off for environments that execute under tracing;
 set `ASAN_OPTIONS=detect_leaks=1` to enable it elsewhere.
 
 The checks cover parser/rasterizer fixes, including gradient fill/stroke
-opacity, shared and missing gradient references, and solid-color opacity,
+opacity, shared and missing gradient references, solid-color opacity,
+and centered/off-center radial focus in both coordinate systems,
 and render all three bundled SVG examples. Override `CC` and `CFLAGS` for
 other configurations:
 
@@ -24,3 +25,7 @@ the rasterizer applies overall shape opacity separately. The parser temporarily
 uses an `opacity` member of the existing `NSVGpaint` union, preserving the
 paint and shape layouts on targets where `float` fits that union. Returned
 paints continue to use only `color` or `gradient` according to their type.
+
+Radial focus checks validate parsed coordinates relative to the center,
+including finite fallback coordinates for nonpositive radii. The built-in
+rasterizer still does not render off-center focal points.

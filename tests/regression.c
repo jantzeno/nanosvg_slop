@@ -312,6 +312,8 @@ static void test_gradients(void)
 						float radius = userSpace ? .5f : sqrtf((80*80+40*40)/2.0f)*.5f;
 						assert(fabsf(pa->gradient->xform[0] - 1/(radius*sx)) < 1e-6f);
 						assert(pa->gradient->fx == pb->gradient->fx && pa->gradient->fy == pb->gradient->fy);
+						assert(fabsf(pa->gradient->fx - (userSpace ? -.25f : -20.0f)/radius) < 1e-6f);
+						assert(fabsf(pa->gradient->fy - (userSpace ? .25f : 10.0f)/radius) < 1e-6f);
 					} else {
 						float width = (userSpace ? 1.0f : 80.0f)*sx;
 						float origin = (userSpace ? 0.0f : 10.0f)*sx + (transformed ? 3.0f : 0.0f);
@@ -323,6 +325,41 @@ static void test_gradients(void)
 				nsvgDelete(images[1]);
 			}
 		}
+	}
+}
+
+static void test_radial_focus(void)
+{
+	const struct { const char* units; const char* coords; float fx, fy; } cases[] = {
+		{"objectBoundingBox", "cx='50%' cy='50%' fx='50%' fy='50%' r='50%'", 0, 0},
+		{"objectBoundingBox", "cx='.5' cy='.5' fx='.5' fy='.5' r='.5'", 0, 0},
+		{"userSpaceOnUse", "cx='50%' cy='50%' fx='50%' fy='50%' r='50%'", 0, 0},
+		{"userSpaceOnUse", "cx='40' cy='30' fx='50' fy='25' r='20'", .5f, -.25f},
+		{"userSpaceOnUse", "cx='40px' cy='30px' fx='40px' fy='30px' r='20px'", 0, 0},
+		{"objectBoundingBox", "cx='.5' cy='.5' fx='.25' fy='.75' r='0'", 0, 0},
+		{"userSpaceOnUse", "cx='40' cy='30' fx='40' fy='30' r='0'", 0, 0},
+		{"userSpaceOnUse", "cx='40' cy='30' fx='50' fy='25' r='-1'", 0, 0}
+	};
+	size_t i;
+	for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+		char svg[1024];
+		NSVGimage* image;
+		int stroke, j;
+		snprintf(svg, sizeof(svg), "<svg width='160' height='80' viewBox='10 20 160 80'>"
+			"<defs><radialGradient id='g' gradientUnits='%s' %s>"
+			"<stop stop-color='red'/></radialGradient></defs>"
+			"<rect x='10' y='20' width='80' height='40' fill='url(#g)' stroke='url(#g)'/></svg>",
+			cases[i].units, cases[i].coords);
+		image = parse(svg);
+		assert(image->shapes != NULL);
+		for (stroke = 0; stroke < 2; stroke++) {
+			NSVGpaint* paint = stroke ? &image->shapes->stroke : &image->shapes->fill;
+			assert(paint->type == NSVG_PAINT_RADIAL_GRADIENT && paint->gradient != NULL);
+			assert(fabsf(paint->gradient->fx - cases[i].fx) < 1e-6f);
+			assert(fabsf(paint->gradient->fy - cases[i].fy) < 1e-6f);
+			for (j = 0; j < 6; j++) assert(isfinite(paint->gradient->xform[j]));
+		}
+		nsvgDelete(image);
 	}
 }
 
@@ -466,6 +503,7 @@ int main(void)
 	test_transforms();
 	test_arcs();
 	test_gradients();
+	test_radial_focus();
 	test_gradient_opacity();
 	test_visibility();
 	test_examples();

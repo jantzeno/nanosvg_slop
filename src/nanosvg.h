@@ -936,8 +936,9 @@ static NSVGgradient* nsvg__createGradient(NSVGparser* p, const char* id, const f
 		grad->xform[0] = r; grad->xform[1] = 0;
 		grad->xform[2] = 0; grad->xform[3] = r;
 		grad->xform[4] = cx; grad->xform[5] = cy;
-		grad->fx = fx / r;
-		grad->fy = fy / r;
+		// Degenerate radii have no normalized focus.
+		grad->fx = r > 0.0f ? (fx - cx) / r : 0.0f;
+		grad->fy = r > 0.0f ? (fy - cy) / r : 0.0f;
 	}
 
 	nsvg__xformMultiply(grad->xform, data->xform);
