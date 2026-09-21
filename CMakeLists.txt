@@ -1,10 +1,11 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.25)
 
 project(NanoSVG C)
+include(GNUInstallDirs)
 
 # CMake needs *.c files to do something useful
-configure_file(src/nanosvg.h ${CMAKE_CURRENT_BINARY_DIR}/nanosvg.c)
-configure_file(src/nanosvgrast.h ${CMAKE_CURRENT_BINARY_DIR}/nanosvgrast.c)
+configure_file(src/nanosvg.h ${CMAKE_CURRENT_BINARY_DIR}/nanosvg.c COPYONLY)
+configure_file(src/nanosvgrast.h ${CMAKE_CURRENT_BINARY_DIR}/nanosvgrast.c COPYONLY)
 
 add_library(nanosvg ${CMAKE_CURRENT_BINARY_DIR}/nanosvg.c)
 
@@ -13,18 +14,19 @@ if(MATH_LIBRARY)
     target_link_libraries(nanosvg PUBLIC ${MATH_LIBRARY})
 endif()
 
-target_include_directories(nanosvg PUBLIC $<INSTALL_INTERFACE:include/nanosvg>)
+target_include_directories(nanosvg PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/nanosvg>"
+)
 target_compile_definitions(nanosvg PRIVATE NANOSVG_IMPLEMENTATION)
 
 # Same for nanosvgrast
 add_library(nanosvgrast ${CMAKE_CURRENT_BINARY_DIR}/nanosvgrast.c)
 target_link_libraries(nanosvgrast PUBLIC nanosvg)
-target_include_directories(nanosvgrast PRIVATE src)
 target_compile_definitions(nanosvgrast PRIVATE NANOSVGRAST_IMPLEMENTATION)
 
 # Installation and export:
 
-include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 write_basic_package_version_file(
@@ -35,9 +37,6 @@ write_basic_package_version_file(
 
 install(TARGETS nanosvg nanosvgrast
         EXPORT ${PROJECT_NAME}Targets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 export(EXPORT ${PROJECT_NAME}Targets 
@@ -58,7 +57,7 @@ install(
       src/nanosvg.h
       src/nanosvgrast.h
     DESTINATION
-      include/nanosvg
+      ${CMAKE_INSTALL_INCLUDEDIR}/nanosvg
   )
 
 install(EXPORT ${PROJECT_NAME}Targets

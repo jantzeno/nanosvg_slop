@@ -30,7 +30,8 @@ Radial focus checks validate parsed coordinates relative to the center,
 including finite fallback coordinates for nonpositive radii. The built-in
 rasterizer still does not render off-center focal points.
 
-Run the installation and external-consumer check with CMake and CTest available:
+Run the installation and external-consumer check with CMake 3.25 or newer and
+CTest available:
 
 ```sh
 CC=/usr/bin/clang sh tests/install.sh
@@ -38,10 +39,17 @@ CC=/usr/bin/clang sh tests/install.sh
 
 It builds the default static and opt-in shared libraries with the default
 library directory and explicit `CMAKE_INSTALL_LIBDIR=lib` and `lib64` overrides.
+The two `lib64` cases also set `CMAKE_INSTALL_INCLUDEDIR=custom/include` and
+verify the installed header locations. Generated `.c` files must be exact
+copies of their source headers.
+
 All installs are confined to temporary directories with `DESTDIR`; the check
-verifies the install
-manifest stays under the chosen prefix. Each relocated installation must
-provide its libraries and package files in the selected directory, and an
-external consumer must find the package, link both exported targets, and render
-a gradient. The repository's CMake 3.10 minimum and static-library default remain
-unchanged.
+verifies the install manifest stays under the chosen prefix. Each relocated
+installation must provide its libraries and package files in the selected
+directory. An external consumer must find the package, link both exported
+targets, and render a gradient.
+
+Two additional static/shared consumers use `add_subdirectory()` and link the
+`nanosvg` and `nanosvgrast` targets without manually specifying include
+directories. All eight consumers run the same rendering check. The minimum
+CMake version is 3.25; the static-library default is unchanged.
